@@ -1,0 +1,36 @@
+# 京东外卖定时优惠券抢券助手 — 配置示例
+# 复制本文件为 config.yaml 并填写相应字段
+
+# 京东账号凭证（首次运行后可清空，凭证将加密存储在 data/credentials.enc）
+credential:
+  cookie: ''   # 留空则启动时弹出浏览器扫码登录，或运行 python login.py
+
+# 每日触发时间（cron 表达式，支持多个）
+# 格式：分 时 * * *，建议在开抢前 1 分钟触发
+# 例：10:30 开抢 → 配置 "29 10 * * *"
+schedule:
+  - '29 10 * * *'
+  - '29 11 * * *'
+  - '29 16 * * *'
+  - '29 17 * * *'
+
+# 优惠券活动页面（从京东外卖活动页复制链接）
+coupon_targets:
+  - url: 'https://hour.jd.com/aggregationChannelPub/channel?...'
+    name: '活动名称（可选，用于日志）'
+
+# 京东收货地址编码（省_市_区_街道），影响可见券范围
+# 可在京东 App 地址管理中查看，或抓包获取
+jd_area: ''
+
+# 浏览器窗口模式：false=弹出窗口（默认），true=后台静默
+headless: false
+
+# 抢券刷新间隔（毫秒），建议 100~2000，太快容易被风控
+grab_interval_ms: 100
+
+# 日志配置（可选，以下为默认值）
+log:
+  path: logs/app.log
+  max_bytes: 10485760   # 10 MB
+  backup_count: 7

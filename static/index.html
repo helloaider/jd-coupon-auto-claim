@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>京东外卖定时优惠券抢券助手 - 管理界面</title>
+  <link rel="icon" type="image/x-icon" href="/static/logo.ico" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="page-header">
+      <h1>京东外卖定时优惠券抢券助手</h1>
+      <span id="app-version" class="app-version"></span>
+    </header>
+
+    <!-- Tab 导航 -->
+    <div class="tab-nav">
+      <button class="tab-btn active" onclick="switchTab('control')">任务控制</button>
+      <button class="tab-btn" onclick="switchTab('config')">配置管理</button>
+    </div>
+
+    <!-- Tab 1：任务控制 -->
+    <div id="tab-control" class="tab-panel">
+
+      <!-- 任务控制区 -->
+      <section class="card" id="scheduler-section">
+        <h2>任务控制</h2>
+        <div class="status-row">
+          <span class="status-indicator" id="status-dot"></span>
+          <span id="status-text">检查中...</span>
+        </div>
+        <div id="next-run-times" class="next-run-times"></div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="start-btn" onclick="startScheduler()">
+            启动任务
+          </button>
+          <button type="button" class="btn btn-danger" id="stop-btn" onclick="stopScheduler()">
+            停止任务
+          </button>
+          <button type="button" class="btn btn-secondary" id="run-now-btn" onclick="runNow()">
+            测试效果
+          </button>
+        </div>
+      </section>
+
+      <!-- 日志区 -->
+      <section class="card" id="log-section">
+        <div class="section-header">
+          <h2>运行日志</h2>
+          <button type="button" class="btn btn-danger btn-sm" onclick="clearLogs()">
+            清空日志
+          </button>
+        </div>
+        <pre id="log-content" class="log-content">暂无日志</pre>
+      </section>
+
+      <!-- 结果区 -->
+      <section class="card" id="result-section">
+        <h2>领券结果</h2>
+        <div id="result-summary" class="result-summary">尚未执行过任务</div>
+        <div id="result-table-wrapper" style="display:none">
+          <table id="result-table" class="result-table">
+            <thead>
+              <tr>
+                <th>券名称</th>
+                <th>面额</th>
+                <th>最低消费</th>
+                <th>状态</th>
+                <th>失败原因</th>
+                <th>领取时间</th>
+              </tr>
+            </thead>
+            <tbody id="result-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- 历史记录 -->
+        <div id="result-history-wrapper" style="display:none; margin-top:16px;">
+          <details id="result-history-details">
+            <summary style="cursor:pointer; color:#666; font-size:13px; user-select:none;">
+              历史记录（最近 <span id="history-count">0</span> 次）
+            </summary>
+            <div id="result-history-list" style="margin-top:8px;"></div>
+          </details>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Tab 2：配置管理 -->
+    <div id="tab-config" class="tab-panel" style="display:none">
+
+      <section class="card" id="config-section">
+        <div class="section-header">
+          <h2>配置管理</h2>
+          <button type="submit" form="config-form" class="btn btn-primary" id="save-btn">保存配置</button>
+        </div>
+        <form id="config-form" onsubmit="saveConfig(event)">
+
+          <div class="form-group">
+            <label for="cookie-input">Cookie</label>
+            <input
+              type="password"
+              id="cookie-input"
+              name="cookie"
+              placeholder="pt_key=xxx; pt_pin=xxx; ..."
+              autocomplete="off"
+            />
+            <small class="hint">留空时启动任务会弹出浏览器让你扫码登录，登录后自动保存</small>
+          </div>
+
+          <div class="form-group">
+            <label>Cron 触发时间列表</label>
+            <div id="cron-list"></div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addCronRow('')">
+              + 添加 Cron 表达式
+            </button>
+            <small class="hint">标准五字段 cron，如 <code>29 10 * * *</code>（每天 10:29 触发）</small>
+          </div>
+
+          <div class="form-group">
+            <label>优惠券活动目标列表</label>
+            <div id="target-list"></div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addTargetRow('', '')">
+              + 添加活动 URL
+            </button>
+          </div>
+
+          <div class="form-group">
+            <label for="jd-area">收货地址编码（jd_area）</label>
+            <input
+              type="text"
+              id="jd-area"
+              name="jd_area"
+              placeholder="如：17_1381_50713_62969"
+            />
+            <small class="hint">省_市_区_街道，影响可见券范围</small>
+          </div>
+
+          <div class="form-group">
+            <label class="toggle-label">
+              <span>弹出浏览器窗口</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="headless-toggle" />
+                <span class="toggle-slider"></span>
+              </label>
+            </label>
+            <small class="hint">开启：抢券时弹出浏览器窗口（可视化）；关闭：后台静默运行</small>
+          </div>
+
+          <div class="form-group">
+            <label for="grab-interval">抢券刷新间隔（毫秒）</label>
+            <input
+              type="number"
+              id="grab-interval"
+              name="grab_interval_ms"
+              min="100"
+              max="2000"
+              step="100"
+              placeholder="100"
+            />
+            <small class="hint">每次页面加载后额外等待的毫秒数，建议 100~2000，太快容易被风控</small>
+          </div>
+
+          <div class="form-actions" style="display:none">
+            <button type="submit" class="btn btn-primary" id="save-btn-bottom">保存配置</button>
+          </div>
+        </form>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- Toast 提示 -->
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

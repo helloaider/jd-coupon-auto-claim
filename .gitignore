@@ -1,0 +1,13 @@
+data/credentials.enc
+data/fernet.key
+data/secret.key
+data/last_result.json
+logs/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+config.yaml
+build/
+dist/

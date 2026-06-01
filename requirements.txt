@@ -1,0 +1,12 @@
+apscheduler==3.10.4
+requests>=2.32.0
+pydantic>=2.7.0
+pyyaml>=6.0.0
+cryptography>=42.0.0
+hypothesis==6.100.1
+pytest>=8.0.0
+pytest-cov==5.0.0
+responses==0.25.3
+flask>=3.0.0
+waitress>=3.0.0
+playwright>=1.44.0
