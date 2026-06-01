@@ -1,30 +1,26 @@
 @echo off
 cd /d "%~dp0"
+
 echo [打包] 自动递增版本号...
-python -c "
-import re, sys
-path = 'src/version.py'
-with open(path, 'r', encoding='utf-8') as f:
-    content = f.read()
-m = re.search(r'__version__\s*=\s*[\"\']([\d.]+)[\"\']]', content)
-if not m:
-    m = re.search(r'__version__\s*=\s*[\"\']([\d.]+)[\"\']]', content.replace('\"', \"'\"))
-# 简单匹配
-import re
-m2 = re.search(r'(\d+)\.(\d+)\.(\d+)', content)
-if m2:
-    major, minor, patch = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
-    new_ver = f'{major}.{minor}.{patch+1}'
-    new_content = content.replace(m2.group(0), new_ver, 1)
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write(new_content)
-    print(f'版本号更新：{m2.group(0)} -> {new_ver}')
-"
+python bump_version.py
+if errorlevel 1 (
+    echo [错误] 版本号递增失败，终止打包
+    pause
+    exit /b 1
+)
+
 echo [打包] 开始打包，请稍候...
 taskkill /F /IM "京东外卖抢券工具*" 2>nul
 del /F /Q dist\*.exe 2>nul
+del /F /Q dist\*.zip 2>nul
 rmdir /S /Q build 2>nul
+
 pyinstaller build.spec --clean --noconfirm
+if errorlevel 1 (
+    echo [错误] PyInstaller 打包失败
+    pause
+    exit /b 1
+)
 
 echo.
 echo [打包] 清理 dist 目录中的敏感文件...
@@ -36,18 +32,12 @@ mkdir dist\logs
 echo [打包] 更新 dist\config.yaml...
 if not exist dist\config.yaml (
     copy /Y config.yaml dist\config.yaml >nul
-    echo 已从根目录拷贝 config.yaml 到 dist\
 )
-python -c "
-import yaml
-path = 'dist/config.yaml'
-with open(path, 'r', encoding='utf-8') as f:
-    cfg = yaml.safe_load(f)
-cfg['credential'] = {'cookie': ''}
-with open(path, 'w', encoding='utf-8') as f:
-    yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
-print('dist/config.yaml 已清理')
-"
+python clean_dist_config.py
+
+echo [打包] 生成发布 zip...
+python -c "import zipfile, glob, os; ver=open('src/version.py').read(); import re; v=re.search(r'[\d.]+', ver).group(); z=zipfile.ZipFile(f'dist/京东外卖定时优惠券抢券助手_v{v}.zip','w',zipfile.ZIP_DEFLATED); [z.write(f, os.path.basename(f)) for f in glob.glob(f'dist/京东外卖定时优惠券抢券助手_v{v}.exe') + ['dist/config.yaml','dist/使用说明.txt']]; z.close(); print(f'zip 已生成：京东外卖定时优惠券抢券助手_v{v}.zip')"
+
 echo.
 echo [完成] 打包完成，发布文件在 dist\ 目录下
 echo [注意] 首次运行需要确保电脑已安装 Microsoft Edge 浏览器
