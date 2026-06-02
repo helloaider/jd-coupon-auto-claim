@@ -333,7 +333,7 @@ class CouponCrawler:
         ready_start   = trigger_minute * 60 + 30   # 触发分钟:30 开始预备
         preheat_time  = trigger_minute * 60 + 50   # 触发分钟:50 预热刷新一次
         refresh_start = trigger_minute * 60 + 55   # 触发分钟:55 开始正常刷新
-        stop_time     = open_minute * 60 + 30       # 开抢分钟:30 结束
+        stop_time     = open_minute * 60 + 20       # 开抢分钟:20 结束
 
         # 预热刷新触发时间：在 :50 正负随机 1000ms，只在任务开始时随机一次
         import random as _r
@@ -597,3 +597,83 @@ class CouponCrawler:
                 close_btn.click()
         except Exception:
             pass
+
+    def idle_check(self) -> None:
+        """
+        闲时巡检：轻量刷新一次活动页面，扫描是否有可领取优惠券。
+        发现「立即抢券」或「立即领取」按钮则点击并记录日志，否则静默返回。
+        不抛出异常，所有错误仅记录警告日志。
+        """
+        if not self._targets:
+            return
+        url = self._targets[0].url
+
+        # 若浏览器未启动（从未预热或已关闭），不在 idle_check 里重新启动，
+        # 避免停止过程中意外弹出浏览器
+        if self._browser is None or self._page is None:
+            return
+        try:
+            connected = self._browser.is_connected()
+        except Exception:
+            connected = False
+        if not connected:
+            return
+
+        page = self._page
+
+        try:
+            # 检查登录状态，不阻塞（不等待登录）
+            if "login" in page.url.lower() or "passport" in page.url.lower():
+                self._logger.info("闲时巡检：检测到登录页，跳过本次")
+                return
+
+            # 轻量刷新：等接口返回即可，不等完整页面
+            try:
+                with page.expect_response(
+                    lambda r: "hours_home_pub" in r.url and r.status == 200,
+                    timeout=2000,
+                ):
+                    page.reload(wait_until="commit")
+            except Exception:
+                # 接口未响应也继续扫描，页面可能已有内容
+                pass
+
+            # 再次检查登录状态
+            if "login" in page.url.lower() or "passport" in page.url.lower():
+                self._logger.info("闲时巡检：刷新后跳转到登录页，跳过本次")
+                return
+
+            # 扫描按钮
+            btn_sections = page.locator(".coupon-button-section").all()
+            for section in btn_sections:
+                try:
+                    text = section.locator(".coupon-button-text").inner_text(timeout=300).strip()
+                    if text in ("立即抢券", "立即领取"):
+                        self._logger.info("闲时巡检：发现可领取按钮「%s」，尝试点击", text)
+                        import random as _r
+                        for i in range(3):
+                            try:
+                                section.click(timeout=2000)
+                                self._logger.info("闲时巡检：第 %d 次点击", i + 1)
+                            except Exception:
+                                pass
+                            if i < 2:
+                                page.wait_for_timeout(_r.randint(200, 500))
+                        # 等待一下看结果
+                        page.wait_for_timeout(800)
+                        try:
+                            result_text = page.content()
+                            if any(kw in result_text for kw in ["领取成功", "抢券成功", "已放入", "去使用", "已领取"]):
+                                self._logger.info("闲时巡检：领取成功")
+                            else:
+                                self._logger.info("闲时巡检：点击完成，页面无明确成功提示")
+                        except Exception:
+                            pass
+                        return  # 点过一次就返回，不继续扫下一个
+                except Exception:
+                    pass
+
+            self._logger.debug("闲时巡检：页面无可领取按钮")
+
+        except Exception as exc:
+            self._logger.warning("闲时巡检：执行异常：%s", exc)

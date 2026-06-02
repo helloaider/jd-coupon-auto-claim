@@ -48,9 +48,14 @@
       <section class="card" id="log-section">
         <div class="section-header">
           <h2>运行日志</h2>
-          <button type="button" class="btn btn-danger btn-sm" onclick="clearLogs()">
-            清空日志
-          </button>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button type="button" class="btn btn-secondary btn-sm" id="log-scroll-btn" onclick="toggleLogScroll()">
+              ⏸ 暂停滚动
+            </button>
+            <button type="button" class="btn btn-danger btn-sm" onclick="clearLogs()">
+              清空日志
+            </button>
+          </div>
         </div>
         <pre id="log-content" class="log-content">暂无日志</pre>
       </section>
@@ -94,65 +99,141 @@
       <section class="card" id="config-section">
         <div class="section-header">
           <h2>配置管理</h2>
-          <button type="submit" form="config-form" class="btn btn-primary" id="save-btn">保存配置</button>
         </div>
         <form id="config-form" onsubmit="saveConfig(event)">
 
-          <div class="form-group">
-            <label>Cron 触发时间列表</label>
-            <div id="cron-list"></div>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="addCronRow('')">
-              + 添加 Cron 表达式
-            </button>
-            <small class="hint">标准五字段 cron，如 <code>29 10 * * *</code>（每天 10:29 触发）</small>
+          <!-- 红色区域：Cron 列表 + 活动 URL 列表，左右并列 -->
+          <div class="config-two-col" style="display:flex; gap:20px; margin-bottom:16px;">
+
+            <div class="form-group" style="flex:1; margin-bottom:0;">
+              <label>Cron 触发时间列表</label>
+              <div id="cron-list"></div>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="addCronRow('')">
+                + 添加 Cron 表达式
+              </button>
+              <small class="hint">标准五字段 cron，如 <code>29 10 * * *</code>（每天 10:29 触发）</small>
+            </div>
+
+            <div class="form-group" style="flex:1; margin-bottom:0;">
+              <label>优惠券活动目标列表</label>
+              <div id="target-list"></div>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="addTargetRow('', '')">
+                + 添加活动 URL
+              </button>
+            </div>
+
           </div>
 
-          <div class="form-group">
-            <label>优惠券活动目标列表</label>
-            <div id="target-list"></div>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="addTargetRow('', '')">
-              + 添加活动 URL
-            </button>
-          </div>
+          <!-- 三列并列：收货地址编码 + 弹出浏览器窗口 + 抢券刷新间隔 -->
+          <div class="config-two-col" style="display:flex; gap:20px; margin-bottom:16px;">
 
-          <div class="form-group">
-            <label for="jd-area">收货地址编码（jd_area）</label>
-            <input
-              type="text"
-              id="jd-area"
-              name="jd_area"
-              placeholder="如：17_1381_50713_62969"
-            />
-            <small class="hint">省_市_区_街道，影响可见券范围</small>
+            <div class="form-group" style="flex:1; margin-bottom:0;">
+              <label class="toggle-label">
+                <span>弹出浏览器窗口</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="headless-toggle" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </label>
+              <small class="hint">开启：抢券时弹出浏览器窗口（可视化）；关闭：后台静默运行</small>
+            </div>
+
+            <div class="form-group" style="flex:1; margin-bottom:0;">
+              <label for="grab-interval">抢券刷新间隔（毫秒）</label>
+              <input
+                type="number"
+                id="grab-interval"
+                name="grab_interval_ms"
+                min="100"
+                max="2000"
+                step="100"
+                placeholder="100"
+              />
+              <small class="hint">每次页面加载后额外等待的毫秒数，建议 100~2000，太快容易被风控</small>
+            </div>
+
+            <div class="form-group" style="flex:1; margin-bottom:0;">
+              <label for="jd-area">收货地址编码（jd_area）</label>
+              <input
+                type="text"
+                id="jd-area"
+                name="jd_area"
+                placeholder="如：17_1381_50713_62969"
+                style="width:100%"
+              />
+              <small class="hint">省_市_区_街道，影响可见券范围</small>
+            </div>
+
           </div>
 
           <div class="form-group">
             <label class="toggle-label">
-              <span>弹出浏览器窗口</span>
+              <span>闲时找券</span>
               <label class="toggle-switch">
-                <input type="checkbox" id="headless-toggle" />
+                <input type="checkbox" id="idle-check-toggle" />
                 <span class="toggle-slider"></span>
               </label>
             </label>
-            <small class="hint">开启：抢券时弹出浏览器窗口（可视化）；关闭：后台静默运行</small>
+            <small class="hint">开启后，在非定点抢券时段内每隔约 5 分钟自动刷新一次页面，捡漏临时出现的可领取优惠券【建议在官方定点券未按时发放时才开启】</small>
           </div>
 
-          <div class="form-group">
-            <label for="grab-interval">抢券刷新间隔（毫秒）</label>
-            <input
-              type="number"
-              id="grab-interval"
-              name="grab_interval_ms"
-              min="100"
-              max="2000"
-              step="100"
-              placeholder="100"
-            />
-            <small class="hint">每次页面加载后额外等待的毫秒数，建议 100~2000，太快容易被风控</small>
+          <div class="form-group" id="idle-time-range-group">
+            <label>闲时找券时间段</label>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <input
+                type="number"
+                id="idle-start-hour"
+                min="0" max="23" step="1"
+                style="width:70px"
+                placeholder="10"
+              />
+              <span style="color:#666;">:01 &nbsp;到&nbsp;</span>
+              <input
+                type="number"
+                id="idle-end-hour"
+                min="0" max="23" step="1"
+                style="width:70px"
+                placeholder="18"
+              />
+              <span style="color:#666;">:56</span>
+            </div>
+            <small class="hint">仅在此时间段内巡检（小时数，0~23），默认 10 到 18</small>
           </div>
 
-          <div class="form-actions" style="display:none">
-            <button type="submit" class="btn btn-primary" id="save-btn-bottom">保存配置</button>
+          <!-- 邮件通知 -->
+          <div class="form-group" style="margin-top:8px;">
+            <label class="toggle-label">
+              <span>QQ 邮箱通知</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="email-notify-toggle" />
+                <span class="toggle-slider"></span>
+              </label>
+            </label>
+            <small class="hint">开启后每次抢券任务完成时发送结果邮件</small>
+          </div>
+
+          <div id="email-notify-group" style="display:none;">
+            <div class="config-two-col" style="display:flex; gap:20px; margin-bottom:0;">
+              <div class="form-group" style="flex:1; margin-bottom:0;">
+                <label for="email-qq">QQ 号</label>
+                <input type="text" id="email-qq" placeholder="如：123456789" style="width:100%" />
+                <small class="hint">发件邮箱为该QQ号对应的邮箱</small>
+              </div>
+              <div class="form-group" style="flex:1; margin-bottom:0;">
+                <label for="email-auth-code">授权码</label>
+                <input type="password" id="email-auth-code" placeholder="QQ邮箱授权码（非登录密码）" style="width:100%" />
+                <small class="hint">在QQ邮箱设置 → 账号与安全 → 安全设置 -> 开启 SMTP(POP3/IMAP/SMTP/Exchange/CardDAV 服务) → 生成授权码</small>
+              </div>
+              <div class="form-group" style="flex:1; margin-bottom:0;">
+                <label for="email-receiver">收件人邮箱</label>
+                <input type="text" id="email-receiver" placeholder="留空则发给自己（同 QQ 邮箱）" style="width:100%" />
+                <small class="hint">留空则发送到发件QQ对应邮箱</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-actions" style="margin-top:24px;">
+            <button type="submit" class="btn btn-primary" id="save-btn">保存配置</button>
           </div>
         </form>
       </section>

@@ -3,7 +3,7 @@
 ## 一、项目概述
 
 **项目名称**：京东外卖定时优惠券抢券助手  
-**版本**：v1.0.15  
+**版本**：v1.0.17  
 **项目定位**：一个基于 Playwright 浏览器自动化的桌面工具，用于在京东外卖（hour.jd.com）平台定时自动抢领优惠券。  
 **核心能力**：
 
@@ -72,7 +72,7 @@ jd-coupon-auto-claim/
 └── dist/                    # 打包输出目录
     ├── config.yaml
     ├── 使用说明.txt
-    └── 京东外卖定时优惠券抢券助手_v1.0.15.exe
+    └── 京东外卖定时优惠券抢券助手_v1.0.17.exe
 ```
 
 ---
@@ -165,7 +165,7 @@ jd-coupon-auto-claim/
 | 发现「立即抢券」/「立即领取」 | 随机间隔（200~500ms）连点 3 次 |
 | T+0:06 起 | 「已领取」→ 成功；「已抢光/已售罄/库存不足」→ 失败 |
 | 每轮耗时不足 1.3~1.6s | 补足等待（随机） |
-| T+1:30 | 停止轮询，结果写入 `data/last_result.json` |
+| T+1:20 | 停止轮询，结果写入 `data/last_result.json` |
 
 **停止任务**
 
@@ -324,12 +324,12 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
   ├── T:00 ~ T:30    等待阶段
   ├── T:30 ~ T:55    预备阶段 ── 打开活动页面
   │     └── T:50     预热刷新（随机 ±1s）
-  ├── T:55 ~ T+1:30  高频刷新轮询
+  ├── T:55 ~ T+1:20  高频刷新轮询
   │     ├── 每轮检测"立即抢券"按钮 → 连点 3 次
   │     ├── 检测风控提示"销售火爆" → 终止
   │     ├── 切换到"正在抢券中"tab
   │     └── 检测"已领取"/"已抢光" → 返回结果
-  └── T+1:30         停止轮询
+  └── T+1:20         停止轮询
 ```
 
 **反检测措施**：
@@ -403,7 +403,7 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 |------|------|
 | `GET /` | 返回 `index.html` |
 | `GET /static/<path>` | 静态文件 |
-| `GET /api/version` | 返回版本号 `{"version": "1.0.15"}` |
+| `GET /api/version` | 返回版本号 `{"version": "1.0.17"}` |
 
 #### 4.8.2 `auth_middleware.py` — Basic Auth 中间件
 
@@ -496,7 +496,7 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 Web 管理界面，包含两个 Tab：
 
 1. **任务控制 Tab**：调度器状态指示、启动/停止按钮、"测试效果"按钮、运行日志面板、领券结果展示
-2. **配置管理 Tab**：Cron 时间列表（动态增删行）、活动 URL 列表、JD Area 编码、浏览器模式开关（弹出窗口/后台静默）、刷新间隔、保存按钮
+2. **配置管理 Tab**：Cron 时间列表（两列网格）、活动 URL 列表、JD Area 编码、浏览器模式开关、刷新间隔、闲时找券开关（含时间段配置）、QQ 邮箱通知配置、保存按钮
 
 #### `static/app.js`
 
@@ -515,23 +515,32 @@ Web 管理界面，包含两个 Tab：
 | `pollLogs()` | 轮询日志（每 3 秒） |
 | `clearLogs()` | 清空日志 |
 | `loadResult()` / `renderResult()` | 加载并渲染领券结果（含历史记录） |
+| `_updateIdleTimeRangeVisibility()` | 闲时找券开关联动显示/隐藏时间段 |
+| `_updateEmailNotifyVisibility()` | 邮件通知开关联动显示/隐藏配置区 |
 
 ---
 
 ## 五、配置说明 (`config.yaml`)
 
 ```yaml
-coupon_targets:
-  - name: 京东外卖百补好运券
-    url: https://hour.jd.com/aggregationChannelPub/...
-grab_interval_ms: 100                     # 刷新间隔（毫秒）
-headless: false                           # true=后台静默，false=弹出窗口
-jd_area: '17_1381_50713_62969'          # 京东收货地址编码
 schedule:
   - '29 10 * * *'   # 每天 10:29 开始抢
-  - '29 11 * * *'   # 每天 11:29 开始抢
-  - '29 16 * * *'   # 每天 16:29 开始抢
-  - '29 17 * * *'   # 每天 17:29 开始抢
+  - '29 11 * * *'
+  - '29 16 * * *'
+  - '29 17 * * *'
+coupon_targets:
+  - name: 京东外卖百补好运券
+    url: https://hour.jd.com/...
+jd_area: '17_1381_50713_62969'
+headless: false
+grab_interval_ms: 200
+idle_check_enabled: false       # 闲时找券开关
+idle_check_start_hour: 10       # 巡检开始小时
+idle_check_end_hour: 18         # 巡检结束小时
+notify_email:                   # 可选，不填则不发通知
+  qq: '123456789'
+  auth_code: 'xxxxxxxxxxxx'     # QQ 邮箱授权码（非登录密码）
+  receiver: ''                  # 留空则发给自己
 ```
 
 **关键配置项说明**：
@@ -542,8 +551,14 @@ schedule:
 | `schedule` | 数组 | 必填 | cron 表达式列表 |
 | `headless` | 布尔 | false | 浏览器模式 |
 | `jd_area` | 字符串 | 空 | 影响可见券范围 |
-| `grab_interval_ms` | 整数 | 300 | 刷新间隔（毫秒） |
+| `grab_interval_ms` | 整数 | 200 | 抢券刷新间隔（毫秒） |
 | `request_timeout` | 元组 | (5, 15) | HTTP 超时（连接秒数, 读取秒数） |
+| `idle_check_enabled` | 布尔 | false | 是否启用闲时找券 |
+| `idle_check_start_hour` | 整数 | 10 | 闲时巡检开始小时（0~23） |
+| `idle_check_end_hour` | 整数 | 18 | 闲时巡检结束小时（0~23） |
+| `notify_email.qq` | 字符串 | 空 | QQ 号（发件邮箱 = QQ号@qq.com） |
+| `notify_email.auth_code` | 字符串 | 空 | QQ 邮箱授权码 |
+| `notify_email.receiver` | 字符串 | 空 | 收件人邮箱，留空则发给自己 |
 
 ---
 
@@ -579,14 +594,32 @@ TaskRunner.run()
     ├── ④ CouponCrawler.run(force) → 执行领券
     │       │
     │       ├── _ensure_browser() → 预热浏览器
-    │       └── _grab_coupons() → 轮询抢券
+    │       └── _grab_coupons() → 轮询抢券（T:55 ~ T+1:20）
     │               │
     │               ├── 刷新页面 → 扫描按钮 → 点击
     │               ├── 检测风控 / 登录过期
     │               └── 返回 ClaimResult[]
     │
     ├── ⑤ result_writer.write_result() → 写入 last_result.json
-    └── ⑥ 记录完成日志
+    ├── ⑥ email_notifier.send_result_email() → 发送 QQ 邮箱通知（若已配置）
+    └── ⑦ 记录完成日志
+```
+
+### 6.4 闲时找券流
+
+```
+worker.py 主循环（每秒检测）
+    │
+    ├── 未到节拍时间 → 跳过
+    ├── 不在时间段内（start_hour:01 ~ end_hour:56）→ 跳过，等下一节拍
+    ├── 处于定点抢券忙时窗口（触发分钟:25 ~ 开抢分钟:25）→ 60s 后重判
+    └── 正常 → CouponCrawler.idle_check()
+                │
+                ├── 浏览器未启动 → 直接返回（不重新弹出）
+                ├── page.reload() → 等待接口响应
+                ├── 扫描 .coupon-button-section
+                ├── 发现「立即抢券」→ 连点 3 次，记录日志
+                └── 无按钮 → 静默返回，等待下一节拍
 ```
 
 ### 6.3 Web API 请求流
@@ -655,6 +688,7 @@ worker.py
   ├── src.task_runner
   │     ├── src.auth_manager
   │     ├── src.coupon_crawler
+  │     ├── src.email_notifier → src.models
   │     └── src.web.result_writer → src.models
   └── src.logger_setup → src.models
 
@@ -709,7 +743,7 @@ python worker.py
 
 1. 运行 `打包.bat` 生成 `.exe` 文件到 `dist/` 目录
 2. 分发 `dist/` 目录给最终用户
-3. 用户双击 `京东外卖定时优惠券抢券助手_v1.0.15.exe` 即可运行
+3. 用户双击 `京东外卖定时优惠券抢券助手_v1.0.17.exe` 即可运行
 4. 首次运行需在 Web 界面配置 Cookie 或使用 `login.py`
 
 ### 9.4 命令行参数
@@ -770,4 +804,4 @@ python worker.py
 | 版本 | 说明 |
 |------|------|
 | 1.0.0 | 初始发布版本 |
-| 1.0.15 | 当前版本 |
+| 1.0.17 | 新增闲时找券、QQ 邮箱通知；抢券结束时间改为开抢分钟 :20 |

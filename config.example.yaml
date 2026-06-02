@@ -13,8 +13,9 @@ schedule:
 
 # 优惠券活动页面（从京东外卖活动页复制链接）
 coupon_targets:
-  - url: 'https://hour.jd.com/aggregationChannelPub/channel?...'
-    name: '活动名称（可选，用于日志）'
+  - url: 'https://hour.jd.com/aggregationChannelPub/channel?channelType=mixSingleChannel&scene=single&args-smallHomeModuleId=36110&hgi-cpsIssueTouchPointId=BP-20250818-0001&hgi-cpsGrabTouchPointId=BP-20251223-0002&needLp=true&refersouce=cps&sourceValue=400009&realTimeLoc=1&hideNav=1&hideYLZJ=1&title=%E5%A4%96%E5%8D%96&cu=true
+'
+    name: '京东外卖百补好运券'
 
 # 京东收货地址编码（省_市_区_街道），影响可见券范围
 # 可在京东 App 地址管理中查看，或抓包获取
@@ -24,7 +25,21 @@ jd_area: ''
 headless: false
 
 # 抢券刷新间隔（毫秒），建议 100~2000，太快容易被风控
-grab_interval_ms: 100
+grab_interval_ms: 200
+
+# 闲时找券：在非定点抢券时段内按固定节拍巡检页面，捡漏临时出现的可领取优惠券
+# 建议在官方定点券未按时发放时才开启
+idle_check_enabled: false
+
+# 闲时找券时间段（小时，0~23），默认 10:01 ~ 18:56
+idle_check_start_hour: 10
+idle_check_end_hour: 18
+
+# QQ 邮箱通知（可选，不填则不发通知）
+# notify_email:
+#   qq: '123456789'           # QQ 号（发件人为 QQ号@qq.com）
+#   auth_code: 'abcdxxxxxxxx' # QQ邮箱授权码（非登录密码，在QQ邮箱设置→账户→SMTP中生成）
+#   receiver: ''              # 收件人邮箱，留空则发给自己
 
 # 日志配置（可选，以下为默认值）
 log:

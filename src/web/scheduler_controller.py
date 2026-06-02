@@ -80,9 +80,9 @@ class SchedulerController:
                         f.write("stop")
                 except Exception:
                     pass
-                # 等待 worker 自行退出（最多 10 秒）
+                # 等待 worker 自行退出（最多 15 秒，给浏览器启动过程留足时间）
                 try:
-                    self._proc.wait(timeout=10)
+                    self._proc.wait(timeout=15)
                 except Exception:
                     pass
                 # 若还未退出则强杀
@@ -92,7 +92,7 @@ class SchedulerController:
                         self._proc.wait(timeout=3)
                     except Exception:
                         pass
-                # 清理标志文件
+                # 清理标志文件（worker 正常退出时会自行删除，这里兜底）
                 try:
                     os.remove(stop_flag)
                 except Exception:

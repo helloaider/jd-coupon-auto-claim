@@ -1,13 +1,9 @@
-"""清理 dist/config.yaml：清空 cookie"""
-import yaml
+"""
+生成 dist/config.yaml：
+直接以 config.example.yaml 为模板写入，确保分发时配置干净、
+不含个人信息，且包含所有最新字段。
+"""
+import shutil
 
-path = "dist/config.yaml"
-with open(path, "r", encoding="utf-8") as f:
-    cfg = yaml.safe_load(f)
-
-cfg["credential"] = {"cookie": ""}
-
-with open(path, "w", encoding="utf-8") as f:
-    yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
-
-print("dist/config.yaml 已清理")
+shutil.copy("config.example.yaml", "dist/config.yaml")
+print("dist/config.yaml 已从 config.example.yaml 生成")

@@ -21,10 +21,12 @@ class TaskRunner:
         auth_manager: CredentialManager,
         crawler: CouponCrawler,
         logger: logging.Logger,
+        notify_email_cfg=None,
     ) -> None:
         self._auth_manager = auth_manager
         self._crawler = crawler
         self._logger = logger
+        self._notify_email_cfg = notify_email_cfg  # EmailNotifyConfig | None
 
     def run(self, force: bool = False) -> None:
         """执行一次完整的领券任务。force=True 时跳过时间窗口限制。"""
@@ -54,7 +56,17 @@ class TaskRunner:
             except Exception as exc:
                 self._logger.warning("写入领券结果失败：%s", exc)
 
-            # 步骤 5：记录任务完成日志
+            # 步骤 5：发送邮件通知
+            if self._notify_email_cfg is not None:
+                try:
+                    from src.email_notifier import send_result_email
+                    send_result_email(
+                        self._notify_email_cfg, results, task_time, self._logger
+                    )
+                except Exception as exc:
+                    self._logger.warning("邮件通知发送失败：%s", exc)
+
+            # 步骤 6：记录任务完成日志
             from .models import ClaimStatus
 
             success_count = sum(1 for r in results if r.status == ClaimStatus.SUCCESS)

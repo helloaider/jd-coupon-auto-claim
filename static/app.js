@@ -7,6 +7,7 @@ const state = {
   schedulerRunning: false,
   logLines: [],
   lastLogCount: 0,
+  logAutoScroll: true,  // 日志是否自动滚动到底部
 };
 
 // ===== Tab 切换 =====
@@ -92,6 +93,27 @@ async function loadConfig() {
     // 刷新间隔
     document.getElementById('grab-interval').value = data.grab_interval_ms ?? 0;
 
+    // 闲时找券开关
+    const idleCheckToggle = document.getElementById('idle-check-toggle');
+    idleCheckToggle.checked = data.idle_check_enabled === true;
+    _updateIdleTimeRangeVisibility();
+
+    // 闲时找券时间段
+    document.getElementById('idle-start-hour').value = data.idle_check_start_hour ?? 10;
+    document.getElementById('idle-end-hour').value   = data.idle_check_end_hour   ?? 18;
+
+    // QQ 邮箱通知
+    const emailCfg = data.notify_email;
+    const emailToggle = document.getElementById('email-notify-toggle');
+    const hasEmail = emailCfg && emailCfg.qq;
+    emailToggle.checked = !!hasEmail;
+    _updateEmailNotifyVisibility();
+    if (emailCfg) {
+      document.getElementById('email-qq').value           = emailCfg.qq       || '';
+      document.getElementById('email-auth-code').value    = emailCfg.auth_code ? '••••••••' : '';
+      document.getElementById('email-receiver').value     = emailCfg.receiver  || '';
+    }
+
   } catch (err) {
     showToast('加载配置时发生错误', 'error');
     console.error('loadConfig error:', err);
@@ -131,6 +153,25 @@ async function saveConfig(event) {
     // 刷新间隔
     const grab_interval_ms = parseInt(document.getElementById('grab-interval').value) || 0;
 
+    // 闲时找券开关
+    const idle_check_enabled = document.getElementById('idle-check-toggle').checked;
+
+    // 闲时找券时间段
+    const idle_check_start_hour = parseInt(document.getElementById('idle-start-hour').value) || 10;
+    const idle_check_end_hour   = parseInt(document.getElementById('idle-end-hour').value)   || 18;
+
+    // QQ 邮箱通知
+    const emailEnabled = document.getElementById('email-notify-toggle').checked;
+    const emailQQ      = document.getElementById('email-qq').value.trim();
+    const emailAuth    = document.getElementById('email-auth-code').value.trim();
+    const emailRecv    = document.getElementById('email-receiver').value.trim();
+    // auth_code 显示为掩码时不覆盖（保留服务端原值），用空字符串作为信号
+    const notify_email = emailEnabled && emailQQ ? {
+      qq: emailQQ,
+      auth_code: emailAuth === '••••••••' ? '' : emailAuth,
+      receiver: emailRecv,
+    } : null;
+
     const payload = {
       credential: { cookie: '' },
       schedule,
@@ -138,6 +179,10 @@ async function saveConfig(event) {
       jd_area,
       headless,
       grab_interval_ms,
+      idle_check_enabled,
+      idle_check_start_hour,
+      idle_check_end_hour,
+      notify_email,
     };
 
     const resp = await fetch('/api/config', {
@@ -334,8 +379,30 @@ function renderLogs(lines) {
 
   logEl.innerHTML = html;
 
-  // 自动滚动到底部
-  logEl.scrollTop = logEl.scrollHeight;
+  // 仅在自动滚动开启时滚动到底部
+  if (state.logAutoScroll) {
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+}
+
+/**
+ * 切换日志自动滚动状态
+ */
+function toggleLogScroll() {
+  state.logAutoScroll = !state.logAutoScroll;
+  const btn = document.getElementById('log-scroll-btn');
+  if (state.logAutoScroll) {
+    btn.textContent = '⏸ 暂停滚动';
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-secondary');
+    // 立即滚到底
+    const logEl = document.getElementById('log-content');
+    logEl.scrollTop = logEl.scrollHeight;
+  } else {
+    btn.textContent = '▶ 自动滚动';
+    btn.classList.remove('btn-secondary');
+    btn.classList.add('btn-primary');
+  }
 }
 
 /**
@@ -539,6 +606,35 @@ function getStatusText(status) {
     default:        return status || '未知';
   }
 }
+
+// ===== 闲时找券联动 =====
+
+/**
+ * 根据闲时找券开关状态控制时间段输入框的显示
+ */
+function _updateIdleTimeRangeVisibility() {
+  const enabled = document.getElementById('idle-check-toggle').checked;
+  const group = document.getElementById('idle-time-range-group');
+  if (group) group.style.display = enabled ? '' : 'none';
+}
+
+/**
+ * 根据邮件通知开关状态控制邮件配置区域的显示
+ */
+function _updateEmailNotifyVisibility() {
+  const enabled = document.getElementById('email-notify-toggle').checked;
+  const group = document.getElementById('email-notify-group');
+  if (group) group.style.display = enabled ? '' : 'none';
+}
+
+// 绑定开关变化事件（在 DOMContentLoaded 后执行）
+document.addEventListener('DOMContentLoaded', () => {
+  const idleToggle = document.getElementById('idle-check-toggle');
+  if (idleToggle) idleToggle.addEventListener('change', _updateIdleTimeRangeVisibility);
+
+  const emailToggle = document.getElementById('email-notify-toggle');
+  if (emailToggle) emailToggle.addEventListener('change', _updateEmailNotifyVisibility);
+});
 
 // ===== 动态列表 =====
 

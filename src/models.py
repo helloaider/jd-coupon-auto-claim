@@ -45,10 +45,21 @@ class LogConfig(BaseModel):
     backup_count: int = Field(default=7, description="保留归档文件数量")
 
 
+class EmailNotifyConfig(BaseModel):
+    """QQ 邮箱通知配置。"""
+
+    qq: str = Field(default="", description="QQ 号（即 QQ 邮箱地址前缀）")
+    auth_code: str = Field(default="", description="QQ 邮箱授权码（不是登录密码）")
+    receiver: str = Field(default="", description="收件人邮箱，留空则发给自己（同发件人）")
+
+
 class AppConfig(BaseModel):
     """应用全局配置。"""
 
-    credential: CredentialConfig
+    credential: CredentialConfig = Field(
+        default_factory=CredentialConfig,
+        description="京东账号凭证（实际 cookie 由加密文件管理，此处留空即可）",
+    )
     schedule: List[str] = Field(
         ...,
         min_length=1,
@@ -76,6 +87,34 @@ class AppConfig(BaseModel):
         default=300,
         description="抢券刷新间隔（毫秒），建议 100~2000，太快容易被风控",
     )
+    idle_check_enabled: bool = Field(
+        default=False,
+        description="是否启用闲时找券：在非定点抢券时间段内，按固定节拍巡检页面，捡漏临时出现的可领取优惠券",
+    )
+    idle_check_start_hour: int = Field(
+        default=10,
+        ge=0,
+        le=23,
+        description="闲时找券开始小时（0~23），默认 10，即 10:00 起开始巡检",
+    )
+    idle_check_end_hour: int = Field(
+        default=18,
+        ge=0,
+        le=23,
+        description="闲时找券结束小时（0~23），默认 18，即 18:00 后停止巡检（含该小时的 :01 节拍）",
+    )
+    notify_email: EmailNotifyConfig | None = Field(
+        default=None,
+        description="QQ 邮箱通知配置，不填则不发送通知",
+    )
+
+
+class EmailNotifyConfig(BaseModel):
+    """QQ 邮箱通知配置。"""
+
+    qq: str = Field(default="", description="QQ 号（即 QQ 邮箱地址前缀）")
+    auth_code: str = Field(default="", description="QQ 邮箱授权码（不是登录密码）")
+    receiver: str = Field(default="", description="收件人邮箱，留空则发给自己（同发件人）")
 
 
 # ---------------------------------------------------------------------------

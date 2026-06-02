@@ -74,6 +74,11 @@ _EMPTY_CONFIG_TEMPLATE = {
     "coupon_targets": [],
     "jd_area": "",
     "headless": False,
+    "grab_interval_ms": 300,
+    "idle_check_enabled": False,
+    "idle_check_start_hour": 10,
+    "idle_check_end_hour": 18,
+    "notify_email": None,
     "log": {
         "path": "logs/app.log",
         "max_bytes": 10485760,
@@ -106,6 +111,10 @@ def get_config():
     # 将 AppConfig 转换为字典，移除 credential 中的 cookie 不对外暴露
     config_dict = app_config.model_dump()
     config_dict.pop("credential", None)
+
+    # 邮件授权码掩码处理，不明文返回
+    if config_dict.get("notify_email") and config_dict["notify_email"].get("auth_code"):
+        config_dict["notify_email"]["auth_code"] = "••••••••"
 
     return jsonify(config_dict), 200
 
@@ -175,6 +184,17 @@ def post_config():
     # credential.cookie 由 CredentialManager 通过 credentials.enc 管理，不通过 config.yaml 传递
     # 写入时始终保持 cookie 为空，实际登录凭证不受影响
     data["credential"] = {"cookie": ""}
+
+    # 若邮件授权码为空（前端显示掩码时不传），保留原配置中的授权码
+    email_cfg = data.get("notify_email")
+    if isinstance(email_cfg, dict) and email_cfg.get("qq") and not email_cfg.get("auth_code"):
+        if os.path.exists(config_path):
+            try:
+                existing = ConfigLoader().load(config_path)
+                if existing.notify_email and existing.notify_email.auth_code:
+                    data["notify_email"]["auth_code"] = existing.notify_email.auth_code
+            except Exception:
+                pass
 
     # 原子写入 config.yaml
     try:

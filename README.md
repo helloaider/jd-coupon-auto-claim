@@ -9,6 +9,8 @@
 - 登录状态自动保存，首次扫码后长期有效，无需重复登录
 - 内置 Web 管理界面（Flask），在线配置、启停任务、查看日志与结果
 - 系统托盘图标，后台静默运行，无终端窗口
+- **闲时找券**：非定点时段按固定节拍巡检，捡漏临时放出的可领取券
+- **QQ 邮箱通知**：每次任务完成后自动发送结果邮件
 
 ## 快速开始
 
@@ -40,6 +42,12 @@ python main.py
 | `jd_area` | 京东收货地址编码，影响可见券范围 |
 | `headless` | `false`=弹出浏览器窗口，`true`=后台静默 |
 | `grab_interval_ms` | 抢券刷新间隔（毫秒），建议 100~2000 |
+| `idle_check_enabled` | 是否开启闲时找券（默认 false） |
+| `idle_check_start_hour` | 闲时巡检开始小时（默认 10） |
+| `idle_check_end_hour` | 闲时巡检结束小时（默认 18） |
+| `notify_email.qq` | QQ 号，启用邮件通知 |
+| `notify_email.auth_code` | QQ 邮箱授权码（非登录密码） |
+| `notify_email.receiver` | 收件人邮箱，留空则发给自己 |
 
 首次登录方式：点「启动任务」后程序会弹出 Edge 浏览器，扫码登录后登录状态自动保存，后续无需重复操作。也可以提前运行 `python login.py` 完成登录。
 
@@ -66,10 +74,18 @@ python main.py
 | T:30 | `page.goto()` 打开活动页面 |
 | T:49~51（随机） | `page.reload()` 预热刷新，让数据提前加载 |
 | T:55 | 开始正式轮询（每轮 1.3~1.6s 随机间隔） |
-| T:55 ~ T+1:30 | 检测按钮 → 连点 3 次；检测风控/登录失效；T+0:06 起检测结果 |
-| T+1:30 | 停止轮询，结果写入 `data/last_result.json` |
+| T:55 ~ T+1:20 | 检测按钮 → 连点 3 次；检测风控/登录失效；T+0:06 起检测结果 |
+| T+1:20 | 停止轮询，结果写入 `data/last_result.json` |
 
 发现「立即抢券」按钮后 1 秒内随机间隔连点 3 次。「销售火爆」连续出现 5 次以上才判定风控终止，偶尔出现继续刷新。
+
+**闲时找券**
+
+开启 `idle_check_enabled` 后，worker 在非定点抢券时段内按固定节拍（每小时 :01/:06/:11/:16/:21/:26/:31/:36/:41/:46/:51/:56 分）自动刷新一次活动页面，检测是否有可领取券。每次触发在节拍分钟 ±1 分钟内随机，处于定点抢券窗口（触发分钟 :25 ~ 开抢分钟 :25）时自动跳过。
+
+**邮件通知**
+
+配置 `notify_email` 后，每次 `task_runner.run()` 完成（不论成功失败）都会发送结果邮件。使用 QQ 邮箱 SMTP（smtp.qq.com:465 SSL），需在 QQ 邮箱设置中开启 SMTP 并生成授权码。
 
 **停止任务**
 
@@ -106,11 +122,12 @@ python worker.py --once
 src/
 ├── auth_manager.py      # 登录状态加密管理
 ├── config_loader.py     # 配置加载与校验
-├── coupon_crawler.py    # Playwright 浏览器自动化
-├── task_runner.py       # 任务编排器
+├── coupon_crawler.py    # Playwright 浏览器自动化（含闲时找券 idle_check）
+├── email_notifier.py    # QQ 邮箱通知
+├── task_runner.py       # 任务编排器（含邮件通知调用）
 ├── scheduler.py         # APScheduler 封装（cron 校验）
 ├── logger_setup.py      # 日志初始化
-├── models.py            # Pydantic 数据模型
+├── models.py            # Pydantic 数据模型（含 EmailNotifyConfig）
 └── web/                 # Flask Web 管理界面
 ```
 
@@ -121,6 +138,7 @@ src/
 - 登录状态加密保存在本机，使用 Fernet（AES-128-CBC + HMAC），密钥独立存放
 - Web 界面默认只监听 `127.0.0.1`，不对外暴露
 - 可通过 `WEB_PASSWORD` 环境变量启用 Basic Auth（仅 `web_app.py`）
+- 邮件授权码在 Web 界面以掩码显示，不以明文返回
 
 ## 适用人群
 
@@ -133,7 +151,7 @@ src/
 程序调用你电脑上已安装的 Microsoft Edge 浏览器，以你的身份在浏览器中完成登录和抢券操作，与你本人手动操作浏览器的行为没有本质区别。程序不调用任何京东私有接口，也不解析或篡改网络请求。
 
 - 登录凭证仅保存在本机，使用 AES-128 对称加密存储
-- 程序运行期间不向任何第三方服务器发送数据
+- 程序运行期间不向任何第三方服务器发送数据（邮件通知除外，仅发往你填写的收件箱）
 - 所有日志和结果文件均保存在本机，不上传
 
 ## 免责声明
