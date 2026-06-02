@@ -381,7 +381,7 @@ class CouponCrawler:
                         # 已点击，再刷一次看结果
                         self._logger.info("时间到但已点击，再刷一次确认结果...")
                     else:
-                        self._logger.info("已过 %d:%02d:30，停止轮询", now.hour, open_minute)
+                        self._logger.info("已过 %d:%02d:20，停止轮询", now.hour, open_minute)
                         break
             else:
                 # force 模式（测试效果）：最多刷 20 次后停止
