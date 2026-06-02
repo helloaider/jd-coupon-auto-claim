@@ -1,7 +1,7 @@
 """
 任务编排器模块
 
-串联 AuthManager、CouponCrawler，编排单次领券任务的完整执行流程。
+串联 CredentialManager、CouponCrawler，编排单次领券任务的完整执行流程。
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from .auth_manager import AuthManager, CredentialInvalidError
+from .auth_manager import CredentialManager, LoginExpiredError
 from .coupon_crawler import CouponCrawler, CrawlerError
 
 
@@ -18,7 +18,7 @@ class TaskRunner:
 
     def __init__(
         self,
-        auth_manager: AuthManager,
+        auth_manager: CredentialManager,
         crawler: CouponCrawler,
         logger: logging.Logger,
     ) -> None:
@@ -34,15 +34,15 @@ class TaskRunner:
         )
 
         try:
-            # 步骤 1：检查凭证有效性
+            # 步骤 1：检查登录有效性
             if not self._auth_manager.is_valid():
-                self._logger.error("凭证已失效，跳过本次领券任务")
+                self._logger.error("登录已失效，跳过本次领券任务")
                 return
 
-            # 步骤 2：注入 Cookie 到 crawler
+            # 步骤 2：注入登录凭证到 crawler
             headers = self._auth_manager.get_headers()
-            cookie = headers.get("Cookie", "")
-            self._crawler.set_cookie(cookie)
+            session_cookie = headers.get("Cookie", "")
+            self._crawler.set_session_cookie(session_cookie)
 
             # 步骤 3：执行领券
             results = self._crawler.run(force=force)
@@ -70,9 +70,9 @@ class TaskRunner:
                 skipped_count,
             )
 
-        except CredentialInvalidError as exc:
+        except LoginExpiredError as exc:
             self._auth_manager.mark_invalid()
-            self._logger.error("凭证失效：%s", exc)
+            self._logger.error("登录失效：%s", exc)
 
         except CrawlerError as exc:
             self._logger.error("领券失败：%s", exc)

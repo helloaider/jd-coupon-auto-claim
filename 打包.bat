@@ -36,7 +36,12 @@ if not exist dist\config.yaml (
 python clean_dist_config.py
 
 echo [打包] 生成发布 zip...
-python -c "import zipfile, glob, os; ver=open('src/version.py').read(); import re; v=re.search(r'[\d.]+', ver).group(); z=zipfile.ZipFile(f'dist/京东外卖定时优惠券抢券助手_v{v}.zip','w',zipfile.ZIP_DEFLATED); [z.write(f, os.path.basename(f)) for f in glob.glob(f'dist/京东外卖定时优惠券抢券助手_v{v}.exe') + ['dist/config.yaml','dist/使用说明.txt']]; z.close(); print(f'zip 已生成：京东外卖定时优惠券抢券助手_v{v}.zip')"
+python make_zip.py
+if errorlevel 1 (
+    echo [错误] zip 生成失败
+    pause
+    exit /b 1
+)
 
 echo.
 echo [完成] 打包完成，发布文件在 dist\ 目录下

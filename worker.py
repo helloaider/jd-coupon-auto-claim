@@ -65,7 +65,7 @@ def main() -> None:
     args = parser.parse_args()
 
     import requests
-    from src.auth_manager import AuthManager, CredentialInvalidError, KeyFileNotFoundError
+    from src.auth_manager import CredentialManager, LoginExpiredError, KeyFileNotFoundError
     from src.config_loader import ConfigLoader, ConfigValidationError
     from src.coupon_crawler import CouponCrawler
     from src.logger_setup import setup_logger
@@ -80,13 +80,13 @@ def main() -> None:
 
     logger = setup_logger(config.log)
 
-    # 初始化 AuthManager
-    auth_manager = AuthManager(
+    # 初始化 CredentialManager
+    auth_manager = CredentialManager(
         config.credential, "data/credentials.enc", "data/fernet.key", logger
     )
     try:
         auth_manager.initialize()
-    except CredentialInvalidError:
+    except LoginExpiredError:
         logger.warning("未找到凭证，将在浏览器中等待用户登录")
     except KeyFileNotFoundError:
         print("[错误] 密钥文件丢失", flush=True)
@@ -100,15 +100,15 @@ def main() -> None:
         logger,
         jd_area=config.jd_area,
         headless=config.headless,
-        on_cookie_updated=auth_manager.update_cookie,
+        on_credential_updated=auth_manager.update_credential,
         grab_interval_ms=config.grab_interval_ms,
     )
     task_runner = TaskRunner(auth_manager, crawler, logger)
 
-    # 注入 cookie
+    # 注入登录凭证
     try:
         headers = auth_manager.get_headers()
-        crawler.set_cookie(headers.get("Cookie", ""))
+        crawler.set_session_cookie(headers.get("Cookie", ""))
     except Exception:
         pass
 

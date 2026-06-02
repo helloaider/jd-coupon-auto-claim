@@ -57,16 +57,6 @@ async function loadConfig() {
     }
     const data = await resp.json();
 
-    // Cookie（已保存时显示提示，不回填明文）
-    const cookieInput = document.getElementById('cookie-input');
-    const cookie = data.credential && data.credential.cookie ? data.credential.cookie : '';
-    cookieInput.value = '';
-    if (cookie) {
-      cookieInput.placeholder = '✅ Cookie 已保存（如需更新请重新粘贴）';
-    } else {
-      cookieInput.placeholder = 'pt_key=xxx; pt_pin=xxx; ...';
-    }
-
     // Cron 列表
     const cronList = document.getElementById('cron-list');
     cronList.innerHTML = '';
@@ -119,9 +109,6 @@ async function saveConfig(event) {
   saveBtn.textContent = '保存中...';
 
   try {
-    // 收集 Cookie
-    const cookie = document.getElementById('cookie-input').value.trim();
-
     // 收集 Cron 列表
     const cronInputs = document.querySelectorAll('#cron-list .cron-input');
     const schedule = Array.from(cronInputs)
@@ -145,7 +132,7 @@ async function saveConfig(event) {
     const grab_interval_ms = parseInt(document.getElementById('grab-interval').value) || 0;
 
     const payload = {
-      credential: { cookie },
+      credential: { cookie: '' },
       schedule,
       coupon_targets,
       jd_area,

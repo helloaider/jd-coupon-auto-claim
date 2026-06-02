@@ -24,23 +24,6 @@ config_bp = Blueprint("config", __name__)
 # ---------------------------------------------------------------------------
 
 
-def mask_sensitive(value: str, keep: int = 8) -> str:
-    """
-    对敏感字符串做掩码处理。
-
-    若 value 长度 <= keep，返回原值（不掩码）；
-    否则返回 value[:keep] + "****"。
-    """
-    if len(value) <= keep:
-        return value
-    return value[:keep] + "****"
-
-
-def is_masked(value: str) -> bool:
-    """返回 value 是否包含 '****'（即已被掩码处理）。"""
-    return "****" in value
-
-
 def validate_cron(cron: str) -> bool:
     """
     校验 cron 表达式是否合法。
@@ -98,7 +81,6 @@ _EMPTY_CONFIG_TEMPLATE = {
     },
 }
 
-
 # ---------------------------------------------------------------------------
 # GET /api/config
 # ---------------------------------------------------------------------------
@@ -121,14 +103,9 @@ def get_config():
     except Exception as exc:
         return jsonify({"error": "config_load_error", "message": str(exc)}), 500
 
-    # 将 AppConfig 转换为字典
+    # 将 AppConfig 转换为字典，移除 credential 中的 cookie 不对外暴露
     config_dict = app_config.model_dump()
-
-    # 对敏感字段做掩码处理
-    # credential.cookie
-    cookie = config_dict.get("credential", {}).get("cookie", "")
-    if cookie:
-        config_dict["credential"]["cookie"] = mask_sensitive(cookie)
+    config_dict.pop("credential", None)
 
     return jsonify(config_dict), 200
 
@@ -143,7 +120,8 @@ def post_config():
     """
     保存配置到 config.yaml。
 
-    校验 cron 表达式和 URL 格式，若 Cookie 字段包含掩码则保留原始值，
+    校验 cron 表达式和 URL 格式，credential.cookie 始终写入空值
+    （实际登录凭证由 CredentialManager 通过 data/credentials.enc 管理），
     使用原子写入防止 I/O 错误破坏原文件。
     """
     config_path = current_app.config["CONFIG_PATH"]
@@ -194,19 +172,9 @@ def post_config():
                     400,
                 )
 
-    # 若 credential.cookie 包含掩码，从现有 config.yaml 读取原始 cookie 保留
-    credential = data.get("credential", {})
-    if isinstance(credential, dict):
-        cookie_value = credential.get("cookie", "")
-        if isinstance(cookie_value, str) and is_masked(cookie_value):
-            # 尝试从现有配置文件读取原始 cookie
-            if os.path.exists(config_path):
-                try:
-                    existing_config = ConfigLoader().load(config_path)
-                    data["credential"]["cookie"] = existing_config.credential.cookie
-                except Exception:
-                    # 无法读取原始配置，保留掩码值（不覆盖）
-                    pass
+    # credential.cookie 由 CredentialManager 通过 credentials.enc 管理，不通过 config.yaml 传递
+    # 写入时始终保持 cookie 为空，实际登录凭证不受影响
+    data["credential"] = {"cookie": ""}
 
     # 原子写入 config.yaml
     try:

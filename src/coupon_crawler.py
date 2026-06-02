@@ -44,28 +44,28 @@ class CouponCrawler:
         jd_area: str = "",
         cookie: str = "",
         headless: bool = False,
-        on_cookie_updated=None,
+        on_credential_updated=None,
         grab_interval_ms: int = 0,
     ) -> None:
         self._targets = targets
         self._timeout = timeout
         self._logger = logger
         self._jd_area = jd_area
-        self._cookie = cookie
+        self._session_cookie = cookie
         self._headless = headless
         self._playwright = None
         self._browser = None
         self._context = None
         self._page = None
-        self._on_cookie_updated = on_cookie_updated
+        self._on_credential_updated = on_credential_updated
         self._grab_interval_ms = grab_interval_ms  # 刷新间隔（毫秒）
 
-    def set_cookie(self, cookie: str) -> None:
-        self._cookie = cookie
+    def set_session_cookie(self, session_cookie: str) -> None:
+        self._session_cookie = session_cookie
 
     def _parse_cookies(self) -> list[dict]:
         cookies = []
-        for part in self._cookie.split(";"):
+        for part in self._session_cookie.split(";"):
             part = part.strip()
             if "=" not in part:
                 continue
@@ -142,9 +142,9 @@ class CouponCrawler:
             device_scale_factor=3,
         )
 
-        if self._cookie:
+        if self._session_cookie:
             self._context.add_cookies(self._parse_cookies())
-            self._logger.info("已注入 Cookie")
+            self._logger.info("已注入登录凭证")
 
         # 注入反检测脚本，覆盖 webdriver 标志
         self._context.add_init_script("""
@@ -224,14 +224,14 @@ class CouponCrawler:
         self._logger.info("登录成功，自动提取 Cookie")
         print("[登录] 登录成功，正在自动保存 Cookie...\n")
 
-        # 提取 cookie 并回调保存
+        # 提取登录凭证并回调保存
         cookie_str = self._extract_cookie_from_browser()
         if cookie_str:
-            self._cookie = cookie_str
-            if self._on_cookie_updated:
+            self._session_cookie = cookie_str
+            if self._on_credential_updated:
                 try:
-                    self._on_cookie_updated(cookie_str)
-                    self._logger.info("Cookie 已自动保存，后续任务无需重新登录")
+                    self._on_credential_updated(cookie_str)
+                    self._logger.info("登录凭证已自动保存，后续任务无需重新登录")
                 except Exception as exc:
                     self._logger.warning("保存 Cookie 回调失败：%s", exc)
 
@@ -239,13 +239,13 @@ class CouponCrawler:
         page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
 
     def _extract_cookie_from_browser(self) -> str:
-        """从当前浏览器 context 提取所有 .jd.com cookie，拼成 key=value; 字符串。"""
+        """从当前浏览器 context 提取所有 .jd.com 登录凭证，拼成 key=value; 字符串。"""
         try:
             cookies = self._context.cookies()
             parts = [f"{c['name']}={c['value']}" for c in cookies if "jd.com" in c.get("domain", "")]
             return "; ".join(parts)
         except Exception as exc:
-            self._logger.warning("提取浏览器 Cookie 失败：%s", exc)
+            self._logger.warning("提取浏览器登录凭证失败：%s", exc)
             return ""
 
     def warmup(self) -> None:
@@ -305,7 +305,7 @@ class CouponCrawler:
         - 触发分钟:30 前等待
         - 触发分钟:30~:55 预备（打开页面）
         - 触发分钟:55 开始刷新
-        - 触发分钟+1:20 结束
+        - 触发分钟+1:30 结束
         """
         from playwright.sync_api import TimeoutError as PWTimeout
 
@@ -321,6 +321,8 @@ class CouponCrawler:
         )
         clicked = False
         self._preheat_done = False
+        risk_control_count = 0          # 连续出现「销售火爆」的次数
+        RISK_CONTROL_THRESHOLD = 5      # 连续 N 次才判定为风控
 
         # 记录触发时的分钟数，用于动态计算时间窗口
         trigger_minute = datetime.now().minute
@@ -331,7 +333,7 @@ class CouponCrawler:
         ready_start   = trigger_minute * 60 + 30   # 触发分钟:30 开始预备
         preheat_time  = trigger_minute * 60 + 50   # 触发分钟:50 预热刷新一次
         refresh_start = trigger_minute * 60 + 55   # 触发分钟:55 开始正常刷新
-        stop_time     = open_minute * 60 + 20       # 开抢分钟:20 结束
+        stop_time     = open_minute * 60 + 30       # 开抢分钟:30 结束
 
         # 预热刷新触发时间：在 :50 正负随机 1000ms，只在任务开始时随机一次
         import random as _r
@@ -412,12 +414,20 @@ class CouponCrawler:
             try:
                 page_text = page.content()
                 if "销售火爆" in page_text and "请稍后再试" in page_text:
-                    self._logger.warning("页面出现「销售火爆，请稍后再试」，疑似被风控，终止抢券")
-                    return [ClaimResult(
-                        coupon_info=coupon_info,
-                        status=ClaimStatus.FAILED,
-                        fail_reason=FailReason.OUT_OF_STOCK,
-                    )]
+                    risk_control_count += 1
+                    self._logger.warning(
+                        "页面出现「销售火爆，请稍后再试」（连续第 %d 次）%s",
+                        risk_control_count,
+                        "，继续刷新..." if risk_control_count < RISK_CONTROL_THRESHOLD else "，判定为风控，终止抢券",
+                    )
+                    if risk_control_count >= RISK_CONTROL_THRESHOLD:
+                        return [ClaimResult(
+                            coupon_info=coupon_info,
+                            status=ClaimStatus.FAILED,
+                            fail_reason=FailReason.OUT_OF_STOCK,
+                        )]
+                else:
+                    risk_control_count = 0  # 不连续，重置计数
             except Exception:
                 pass
 
@@ -463,16 +473,24 @@ class CouponCrawler:
                             if i < 2:
                                 page.wait_for_timeout(_random.randint(200, 500))
                         clicked = True
+                        risk_control_count = 0  # 有可抢按钮，重置风控计数
                         found_action = True
                         break
 
                     if text in ("销售火爆，请稍后再试",):
-                        self._logger.warning("检测到「销售火爆，请稍后再试」，疑似被风控，终止抢券")
-                        return [ClaimResult(
-                            coupon_info=coupon_info,
-                            status=ClaimStatus.FAILED,
-                            fail_reason=FailReason.OUT_OF_STOCK,
-                        )]
+                        risk_control_count += 1
+                        self._logger.warning(
+                            "按钮显示「销售火爆，请稍后再试」（连续第 %d 次）%s",
+                            risk_control_count,
+                            "，继续刷新..." if risk_control_count < RISK_CONTROL_THRESHOLD else "，判定为风控，终止抢券",
+                        )
+                        if risk_control_count >= RISK_CONTROL_THRESHOLD:
+                            return [ClaimResult(
+                                coupon_info=coupon_info,
+                                status=ClaimStatus.FAILED,
+                                fail_reason=FailReason.OUT_OF_STOCK,
+                            )]
+                        break  # 本轮跳出按钮扫描，继续下一轮刷新
 
                     # 结束条件：只在「正在抢券中」tab 下判断
                     if (not force) and after_open and ongoing_tab is not None:

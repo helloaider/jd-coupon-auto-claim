@@ -99,18 +99,6 @@
         <form id="config-form" onsubmit="saveConfig(event)">
 
           <div class="form-group">
-            <label for="cookie-input">Cookie</label>
-            <input
-              type="password"
-              id="cookie-input"
-              name="cookie"
-              placeholder="pt_key=xxx; pt_pin=xxx; ..."
-              autocomplete="off"
-            />
-            <small class="hint">留空时启动任务会弹出浏览器让你扫码登录，登录后自动保存</small>
-          </div>
-
-          <div class="form-group">
             <label>Cron 触发时间列表</label>
             <div id="cron-list"></div>
             <button type="button" class="btn btn-secondary btn-sm" onclick="addCronRow('')">

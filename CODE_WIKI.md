@@ -3,7 +3,7 @@
 ## 一、项目概述
 
 **项目名称**：京东外卖定时优惠券抢券助手  
-**版本**：v1.0.13  
+**版本**：v1.0.15  
 **项目定位**：一个基于 Playwright 浏览器自动化的桌面工具，用于在京东外卖（hour.jd.com）平台定时自动抢领优惠券。  
 **核心能力**：
 
@@ -37,7 +37,7 @@ jd-coupon-auto-claim/
 │   ├── version.py           # 版本号管理
 │   ├── models.py            # Pydantic 数据模型 + 运行时数据类
 │   ├── config_loader.py     # 配置加载与校验
-│   ├── auth_manager.py      # 凭证管理（Cookie 加密/解密）
+│   ├── auth_manager.py      # 登录凭证管理（加密存储/读取）
 │   ├── coupon_crawler.py    # 领券执行器（Playwright 浏览器自动化）
 │   ├── task_runner.py       # 任务编排器
 │   ├── scheduler.py         # 定时调度器（APScheduler 封装）
@@ -72,7 +72,7 @@ jd-coupon-auto-claim/
 └── dist/                    # 打包输出目录
     ├── config.yaml
     ├── 使用说明.txt
-    └── 京东外卖定时优惠券抢券助手_v1.0.13.exe
+    └── 京东外卖定时优惠券抢券助手_v1.0.15.exe
 ```
 
 ---
@@ -105,7 +105,7 @@ jd-coupon-auto-claim/
 │  │                 业务逻辑层                         │  │
 │  │  ┌──────────┐ ┌─────────────┐ ┌──────────────┐  │  │
 │  │  │ 配置加载  │ │ 凭证管理    │ │ 任务编排器   │  │  │
-│  │  │ConfigLoad│ │AuthManager  │ │TaskRunner    │  │  │
+│  │  │ConfigLoad│ │CredentialMgr│ │TaskRunner    │  │  │
 │  │  └────┬─────┘ └──────┬──────┘ └──────┬───────┘  │  │
 │  │       │              │               │          │  │
 │  │  ┌────▼──────────────▼───────────────▼───────┐  │  │
@@ -132,6 +132,53 @@ jd-coupon-auto-claim/
 | **工作进程** (`worker.py`) | Playwright 浏览器控制 + 定时调度循环 | Playwright, subprocess |
 
 **通信方式**：主进程通过 `subprocess.Popen` 启动工作进程，通过 `.stop_worker` 标志文件和子进程 stdout 管道通信。
+
+### 3.3 完整运行流程
+
+**启动阶段**
+
+1. 双击 exe，`main.py` 主进程启动
+2. 后台线程启动 Flask + Waitress Web 服务（端口 5000）
+3. 系统托盘图标出现，自动打开浏览器访问管理界面
+
+**启动任务**
+
+1. 用户点「启动任务」
+2. `SchedulerController` 通过 `subprocess.Popen` 启动 `worker.py` 子进程
+3. worker 加载配置、初始化 `AuthManager`、`CouponCrawler`
+4. worker 自动查找 Edge 安装路径（兼容系统级和用户级安装），启动浏览器
+5. 注入反检测脚本（覆盖 `navigator.webdriver`）和模拟移动端 User-Agent
+6. 注入登录凭证，打开活动页面预热，等待 `.coupon-button-section` 元素出现
+7. 若检测到跳转登录页，等用户扫码（最多 5 分钟），登录后自动提取并加密保存凭证
+8. 浏览器就绪，worker 进入主循环每秒检测 cron 触发时间
+
+**到点抢券**（以 `29 10 * * *` 触发，T = 10:29 为例）
+
+| 时间 | 动作 |
+|------|------|
+| T:00 ~ T:30 | 等待阶段，每 5 秒检测一次 |
+| T:30 | `page.goto()` 打开活动页面 |
+| T:49~51（随机，仅随机一次） | `page.reload()` 预热刷新，让数据提前加载 |
+| T:55 | 开始正式轮询 |
+| 每轮循环 | `page.reload(wait_until="commit")` → 监听 `hours_home_pub` 接口响应（超时 1500ms） → 等待 `grab_interval_ms` |
+| 每轮检测 | 检测登录跳转；检测「销售火爆」风控（连续 5 次终止）；切换「正在抢券中」tab；扫描按钮文字 |
+| 发现「立即抢券」/「立即领取」 | 随机间隔（200~500ms）连点 3 次 |
+| T+0:06 起 | 「已领取」→ 成功；「已抢光/已售罄/库存不足」→ 失败 |
+| 每轮耗时不足 1.3~1.6s | 补足等待（随机） |
+| T+1:30 | 停止轮询，结果写入 `data/last_result.json` |
+
+**停止任务**
+
+1. 用户点「停止任务」或托盘「退出」
+2. 主进程写入 `data/.stop_worker` 标志文件
+3. worker 主循环每秒检测该文件，检测到后删除文件并跳出循环
+4. `crawler.close()`：先 `goto("about:blank")` 再关闭 context 和 browser（先跳空白页避免 Edge 崩溃恢复弹窗）
+5. 主进程等待 worker 退出（最多 10 秒），超时则强制 kill
+6. 主进程 `os._exit(0)` 终止
+
+**测试效果**
+
+点「测试效果」，启动临时 worker 子进程（`--once` 参数），`force=True` 跳过时间窗口，最多刷新 20 次后自动退出，不影响正在运行的调度器。
 
 ---
 
@@ -164,7 +211,7 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 |------|------|
 | `_parse_cron_minutes()` | 从 cron 表达式提取分钟数 |
 | `_should_trigger()` | 检查当前时间是否应触发任务（按分钟匹配，防重复） |
-| `main()` | 工作进程主逻辑：加载配置 → 初始化 AuthManager → 启动浏览器 → 轮询调度 |
+| `main()` | 工作进程主逻辑：加载配置 → 初始化 CredentialManager → 启动浏览器 → 轮询调度 |
 
 **执行模式**：
 
@@ -224,7 +271,7 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 
 ### 4.4 凭证管理层 `src/auth_manager.py`
 
-#### `AuthManager` 类
+#### `CredentialManager` 类
 
 **加密方案**：使用 `cryptography.fernet.Fernet`（AES-128-CBC + HMAC）对称加密。
 
@@ -233,17 +280,17 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 | `_load_or_create_key()` | 加载或创建 Fernet 密钥 | 密钥文件不存在时自动生成 |
 | `_encrypt(plaintext)` | 加密字符串 | Fernet 加密 |
 | `_decrypt(ciphertext)` | 解密字节 | Fernet 解密 |
-| `initialize()` | 初始化凭证存储 | 优先使用 config.yaml 中的 cookie 覆盖加密存储 |
-| `get_headers()` | 返回含 Cookie 的请求头 | 从加密文件解密 Cookie |
-| `update_cookie(cookie)` | 更新 Cookie | 浏览器扫码登录后回调，覆盖加密存储 |
-| `mark_invalid()` | 标记凭证失效 | 设置 `_valid = False` |
-| `is_valid()` | 检查凭证有效性 | 返回 `_valid` |
+| `initialize()` | 初始化凭证存储 | 优先使用 config.yaml 中的凭证覆盖加密存储 |
+| `get_headers()` | 返回含登录凭证的请求头 | 从加密文件解密凭证 |
+| `update_credential(session_cookie)` | 更新登录凭证 | 浏览器扫码登录后回调，覆盖加密存储 |
+| `mark_invalid()` | 标记登录失效 | 设置 `_valid = False` |
+| `is_valid()` | 检查登录有效性 | 返回 `_valid` |
 
 **自定义异常**：
 
 | 异常类 | 触发条件 |
 |--------|----------|
-| `CredentialInvalidError` | Cookie 过期或未配置 |
+| `LoginExpiredError` | 登录过期或未登录 |
 | `KeyFileNotFoundError` | Fernet 密钥文件丢失 |
 
 ---
@@ -256,7 +303,7 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 
 | 方法 | 职责 | 关键逻辑 |
 |------|------|----------|
-| `set_cookie(cookie)` | 注入 Cookie | 设置内部 `_cookie` 属性 |
+| `set_session_cookie(session_cookie)` | 注入登录凭证 | 设置内部 `_session_cookie` 属性 |
 | `_parse_cookies()` | 解析 Cookie 字符串 | 将 `key=value;` 格式转为 Playwright cookie 对象 |
 | `_ensure_browser()` | 确保浏览器已启动 | 检测浏览器是否存活，自动重启；注入反检测脚本 |
 | `_wait_for_login_if_needed()` | 检测并等待登录 | 检测登录页域名，等待用户手动扫码，自动提取新 Cookie |
@@ -277,12 +324,12 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
   ├── T:00 ~ T:30    等待阶段
   ├── T:30 ~ T:55    预备阶段 ── 打开活动页面
   │     └── T:50     预热刷新（随机 ±1s）
-  ├── T:55 ~ T+1:20  高频刷新轮询
+  ├── T:55 ~ T+1:30  高频刷新轮询
   │     ├── 每轮检测"立即抢券"按钮 → 连点 3 次
   │     ├── 检测风控提示"销售火爆" → 终止
   │     ├── 切换到"正在抢券中"tab
   │     └── 检测"已领取"/"已抢光" → 返回结果
-  └── T+1:20         停止轮询
+  └── T+1:30         停止轮询
 ```
 
 **反检测措施**：
@@ -291,7 +338,7 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 - 设置移动端 User-Agent
 - 注入 `window.chrome` 对象
 - 设置真实浏览器请求头
-- 随机刷新间隔（1300~1700ms）
+- 随机刷新间隔（1300~1600ms）
 
 **自定义异常**：
 
@@ -356,7 +403,7 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 |------|------|
 | `GET /` | 返回 `index.html` |
 | `GET /static/<path>` | 静态文件 |
-| `GET /api/version` | 返回版本号 `{"version": "1.0.13"}` |
+| `GET /api/version` | 返回版本号 `{"version": "1.0.15"}` |
 
 #### 4.8.2 `auth_middleware.py` — Basic Auth 中间件
 
@@ -370,8 +417,6 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 
 | 辅助函数 | 职责 |
 |----------|------|
-| `mask_sensitive(value)` | 掩码敏感字符串（保留前 8 位 + `****`） |
-| `is_masked(value)` | 判断是否已被掩码 |
 | `validate_cron(cron)` | 校验 cron 表达式合法性 |
 | `validate_url(url)` | 校验 URL 格式（http/https） |
 | `atomic_write_yaml(path, data)` | 原子写入 YAML（先写临时文件，再 `os.replace`） |
@@ -380,8 +425,8 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 
 | 方法 | 路由 | 功能 |
 |------|------|------|
-| GET | `/api/config` | 读取配置（敏感字段掩码） |
-| POST | `/api/config` | 保存配置（校验 cron/URL，掩码值保留原值） |
+| GET | `/api/config` | 读取配置（不含 credential，由 CredentialManager 独立管理） |
+| POST | `/api/config` | 保存配置（校验 cron/URL，credential.cookie 始终保持为空） |
 
 #### 4.8.4 `scheduler_controller.py` — 调度器控制器
 
@@ -451,7 +496,7 @@ python main.py --worker ...             # 内部用，由 Web 界面启动工作
 Web 管理界面，包含两个 Tab：
 
 1. **任务控制 Tab**：调度器状态指示、启动/停止按钮、"测试效果"按钮、运行日志面板、领券结果展示
-2. **配置管理 Tab**：Cookie 输入、Cron 时间列表（动态增删行）、活动 URL 列表、JD Area 编码、浏览器模式开关（弹出窗口/后台静默）、刷新间隔、保存按钮
+2. **配置管理 Tab**：Cron 时间列表（动态增删行）、活动 URL 列表、JD Area 编码、浏览器模式开关（弹出窗口/后台静默）、刷新间隔、保存按钮
 
 #### `static/app.js`
 
@@ -479,8 +524,6 @@ Web 管理界面，包含两个 Tab：
 coupon_targets:
   - name: 京东外卖百补好运券
     url: https://hour.jd.com/aggregationChannelPub/...
-credential:
-  cookie: 'pt_key=xxx; pt_pin=xxx;'     # 京东 Cookie（可空，由 login.py 获取）
 grab_interval_ms: 100                     # 刷新间隔（毫秒）
 headless: false                           # true=后台静默，false=弹出窗口
 jd_area: '17_1381_50713_62969'          # 京东收货地址编码
@@ -497,7 +540,6 @@ schedule:
 |------|------|--------|------|
 | `coupon_targets` | 数组 | 必填 | 优惠券活动目标列表 |
 | `schedule` | 数组 | 必填 | cron 表达式列表 |
-| `credential.cookie` | 字符串 | 空 | 京东 Cookie，`pt_key=xxx; pt_pin=xxx` 格式 |
 | `headless` | 布尔 | false | 浏览器模式 |
 | `jd_area` | 字符串 | 空 | 影响可见券范围 |
 | `grab_interval_ms` | 整数 | 300 | 刷新间隔（毫秒） |
@@ -520,7 +562,7 @@ ConfigLoader.load()
     └── _validate() → Pydantic AppConfig
                            │
                            ▼
-                   AuthManager / CouponCrawler / Scheduler
+                   CredentialManager / CouponCrawler / Scheduler
 ```
 
 ### 6.2 领券任务执行流
@@ -531,9 +573,9 @@ ConfigLoader.load()
     ▼
 TaskRunner.run()
     │
-    ├── ① AuthManager.is_valid() → 检查凭证
-    ├── ② AuthManager.get_headers() → 获取 Cookie
-    ├── ③ CouponCrawler.set_cookie() → 注入 Cookie
+    ├── ① CredentialManager.is_valid() → 检查登录有效性
+    ├── ② CredentialManager.get_headers() → 获取登录凭证
+    ├── ③ CouponCrawler.set_session_cookie() → 注入登录凭证
     ├── ④ CouponCrawler.run(force) → 执行领券
     │       │
     │       ├── _ensure_browser() → 预热浏览器
@@ -565,14 +607,14 @@ TaskRunner.run()
 
 | 安全措施 | 实现方式 |
 |----------|----------|
-| Cookie 加密存储 | Fernet (AES-128-CBC + HMAC)，密钥存独立文件 |
+| Cookie 加密存储 | Fernet (AES-128-CBC + HMAC)，密钥存独立文件，不通过 config.yaml 传递 |
 | 密钥自动生成 | 首次运行时自动生成 `fernet.key` |
 | 凭证失效标记 | 内部 `_valid` 标志，失效后拒绝使用 |
 | 日志脱敏 | Cookie 等敏感信息不记录到日志 |
 | Web 界面认证 | Basic Auth，密码通过环境变量 `WEB_PASSWORD` 设置 |
 | 常量时间比较 | 使用 `hmac.compare_digest` 防时序攻击 |
 | 原子文件写入 | `os.replace` 原子替换，防写入中断损坏 |
-| 敏感字段掩码 | API 返回时对 Cookie/Token 做掩码处理（保留前8位） |
+| 无数据外传 | 程序不向任何第三方服务器发送数据，所有操作在本机浏览器中执行 |
 
 ---
 
@@ -632,7 +674,7 @@ login.py
 
 ```bash
 pip install -r requirements.txt
-playwright install chromium
+playwright install msedge
 ```
 
 **第二步：获取 Cookie**
@@ -667,7 +709,7 @@ python worker.py
 
 1. 运行 `打包.bat` 生成 `.exe` 文件到 `dist/` 目录
 2. 分发 `dist/` 目录给最终用户
-3. 用户双击 `京东外卖定时优惠券抢券助手_v1.0.13.exe` 即可运行
+3. 用户双击 `京东外卖定时优惠券抢券助手_v1.0.15.exe` 即可运行
 4. 首次运行需在 Web 界面配置 Cookie 或使用 `login.py`
 
 ### 9.4 命令行参数
@@ -728,4 +770,4 @@ python worker.py
 | 版本 | 说明 |
 |------|------|
 | 1.0.0 | 初始发布版本 |
-| 1.0.13 | 当前版本 |
+| 1.0.15 | 当前版本 |

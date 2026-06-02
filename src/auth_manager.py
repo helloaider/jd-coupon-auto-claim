@@ -1,7 +1,7 @@
 """
 凭证管理模块
 
-负责京东账号 Cookie 的加密存储、读取和有效性检测。
+负责京东账号登录凭证的加密存储、读取和有效性检测。
 使用 Fernet 对称加密（AES-128-CBC + HMAC），密钥存储于独立文件。
 """
 
@@ -20,21 +20,21 @@ from src.models import CredentialConfig
 # ---------------------------------------------------------------------------
 
 
-class CredentialInvalidError(Exception):
-    """凭证失效时抛出（如 Cookie 过期、未配置等）。"""
+class LoginExpiredError(Exception):
+    """登录凭证失效时抛出（如登录过期、未登录等）。"""
 
 
 class KeyFileNotFoundError(Exception):
-    """Fernet 密钥文件丢失时抛出。密钥丢失后已加密凭证无法解密，需重新配置。"""
+    """Fernet 密钥文件丢失时抛出。密钥丢失后已加密凭证无法解密，需重新登录。"""
 
 
 # ---------------------------------------------------------------------------
-# AuthManager
+# CredentialManager
 # ---------------------------------------------------------------------------
 
 
-class AuthManager:
-    """凭证管理器：负责加密存储、读取 Cookie，并跟踪凭证有效性。"""
+class CredentialManager:
+    """登录凭证管理器：负责加密存储、读取登录凭证，并跟踪登录有效性。"""
 
     def __init__(
         self,
@@ -61,7 +61,7 @@ class AuthManager:
         - 若 key_path 文件存在，读取并返回 Fernet 实例。
         - 若不存在，生成新密钥，写入 key_path（确保目录存在），返回 Fernet 实例。
 
-        注意：密钥文件一旦丢失，已加密的凭证无法解密，需重新配置。
+        注意：密钥文件一旦丢失，已加密的凭证无法解密，需重新登录。
         """
         if os.path.exists(self._key_path):
             with open(self._key_path, "rb") as f:
@@ -93,13 +93,13 @@ class AuthManager:
         """
         初始化凭证存储。
 
-        - 若 config.cookie 非空，始终以新 cookie 覆盖加密存储（确保配置文件更新后生效）。
+        - 若 config.cookie 非空，始终以新凭证覆盖加密存储（确保配置文件更新后生效）。
         - 若 config.cookie 为空且 store_path 文件已存在，使用已存储的加密凭证。
-        - 若 config.cookie 为空且 store_path 文件不存在，抛出 CredentialInvalidError。
-        日志中不记录 cookie 明文。
+        - 若 config.cookie 为空且 store_path 文件不存在，抛出 LoginExpiredError。
+        日志中不记录凭证明文。
         """
         if self._config.cookie:
-            # config.yaml 中有新 cookie，始终覆盖写入（保证更新立即生效）
+            # config.yaml 中有凭证，始终覆盖写入（保证更新立即生效）
             encrypted = self._encrypt(self._config.cookie)
             store_dir = os.path.dirname(self._store_path)
             if store_dir:
@@ -113,27 +113,27 @@ class AuthManager:
             self._logger.info("使用已存储的加密凭证")
             return
 
-        raise CredentialInvalidError(
-            "凭证文件不存在且 config.yaml 中 cookie 为空，请先配置 cookie。"
+        raise LoginExpiredError(
+            "凭证文件不存在，请启动任务后在浏览器中扫码登录。"
         )
 
     def get_headers(self) -> dict[str, str]:
         """
-        返回包含有效 Cookie 的 HTTP 请求头字典。
+        返回包含登录凭证的 HTTP 请求头字典。
 
-        若凭证已标记失效，抛出 CredentialInvalidError。
-        日志中不记录 cookie 明文。
+        若凭证已标记失效，抛出 LoginExpiredError。
+        日志中不记录凭证明文。
         """
         if not self._valid:
-            raise CredentialInvalidError("凭证已失效，请重新配置 cookie。")
+            raise LoginExpiredError("登录已失效，请重新登录。")
 
         with open(self._store_path, "rb") as f:
             ciphertext = f.read()
-        cookie = self._decrypt(ciphertext)
+        session_cookie = self._decrypt(ciphertext)
 
-        self._logger.info("注入凭证到请求头")
+        self._logger.info("注入登录凭证到请求头")
         return {
-            "Cookie": cookie,
+            "Cookie": session_cookie,
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -141,27 +141,27 @@ class AuthManager:
             ),
         }
 
-    def update_cookie(self, cookie: str) -> None:
+    def update_credential(self, session_cookie: str) -> None:
         """
-        用新 cookie 覆盖加密存储，并将凭证标记为有效。
+        用新的登录凭证覆盖加密存储，并将登录状态标记为有效。
 
-        通常在浏览器登录后自动调用，无需手动拷贝 cookie。
-        日志中不记录 cookie 明文。
+        通常在浏览器登录后自动调用，无需手动操作。
+        日志中不记录凭证明文。
         """
-        encrypted = self._encrypt(cookie)
+        encrypted = self._encrypt(session_cookie)
         store_dir = os.path.dirname(self._store_path)
         if store_dir:
             os.makedirs(store_dir, exist_ok=True)
         with open(self._store_path, "wb") as f:
             f.write(encrypted)
         self._valid = True
-        self._logger.info("Cookie 已从浏览器自动更新并加密保存")
+        self._logger.info("登录凭证已从浏览器自动更新并加密保存")
 
     def mark_invalid(self) -> None:
         """将内部 _valid 标志设为 False，记录日志。"""
         self._valid = False
-        self._logger.warning("凭证已标记为失效")
+        self._logger.warning("登录凭证已标记为失效")
 
     def is_valid(self) -> bool:
-        """返回当前凭证是否有效。"""
+        """返回当前登录状态是否有效。"""
         return self._valid
