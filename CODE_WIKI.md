@@ -113,25 +113,54 @@ jd-coupon-auto-claim/
 
 项目采用严格的双进程架构，这是整个设计中最核心的决策：
 
-```
-┌─────────────────────────────────────────────┐
-│  主进程（main.py）                            │
-│                                             │
-│  主线程：pystray 系统托盘（阻塞）              │
-│  后台线程：Flask + Waitress（127.0.0.1:5000） │
-│    └── SchedulerController                  │
-│         └── subprocess.Popen ──────────────┐│
-└────────────────────────────────────────────┼┘
-                                             │
-┌────────────────────────────────────────────▼┐
-│  Worker 子进程（worker.py）                   │
-│                                             │
-│  主线程：while True + sleep(1) 调度循环       │
-│    ├── Playwright Edge 浏览器（全程常驻）      │
-│    ├── TaskRunner → CredentialManager       │
-│    │                └── CouponCrawler       │
-│    └── 闲时巡检逻辑                          │
-└─────────────────────────────────────────────┘
+```mermaid
+graph TB
+subgraph "主进程（main.py）"
+TRAY["系统托盘<br/>pystray 图标"]
+FLASK["Flask Web 服务<br/>Waitress WSGI<br/>127.0.0.1:5000"]
+AUTH_MW["Basic Auth 中间件"]
+CFG_API["config_api<br/>GET/POST /api/config"]
+SCHED_API["scheduler_controller<br/>调度控制 API"]
+LOG_API["log_reader<br/>日志 API"]
+RES_API["result_api<br/>结果 API（含历史）"]
+SC["SchedulerController<br/>subprocess 管理"]
+end
+
+subgraph "Worker 子进程（worker.py）"
+MAIN_LOOP["主循环<br/>while True + sleep(1)"]
+AUTH["CredentialManager<br/>登录凭证管理"]
+CRAWLER["CouponCrawler<br/>Playwright + Edge"]
+RUNNER["TaskRunner<br/>任务编排"]
+LOGGER["LoggerSetup<br/>日志初始化"]
+end
+
+subgraph "数据层"
+CONFIG["config.yaml"]
+CRED["data/credentials.enc"]
+KEY["data/fernet.key"]
+RESULT["data/last_result.json<br/>（含历史记录，最多50条）"]
+STOP["data/.stop_worker<br/>（优雅退出标志文件）"]
+LOGS["logs/app.log"]
+end
+
+USER["用户"] -->|双击 exe| TRAY
+TRAY -->|自动打开| FLASK
+FLASK --> AUTH_MW
+FLASK --> CFG_API
+FLASK --> SCHED_API
+FLASK --> LOG_API
+FLASK --> RES_API
+SCHED_API --> SC
+SC -->|subprocess.Popen| MAIN_LOOP
+MAIN_LOOP -->|触发时间| RUNNER
+RUNNER --> AUTH
+RUNNER --> CRAWLER
+CRAWLER -->|on_credential_updated| AUTH
+AUTH --> CRED
+AUTH --> KEY
+CFG_API --> CONFIG
+RUNNER --> RESULT
+LOGGER --> LOGS
 ```
 
 **为什么要双进程？**  
@@ -145,7 +174,96 @@ Playwright 的 `sync_api` 基于 greenlet，必须在同一线程内操作 brows
 
 优点：无需 IPC 通道，打包成 exe 后完全一样有效。
 
-### 3.2 完整运行流程
+### 3.2 数据模型
+
+```mermaid
+classDiagram
+class AppConfig {
++CredentialConfig credential
++List~str~ schedule
++List~CouponTargetConfig~ coupon_targets
++LogConfig log
++tuple request_timeout
++str jd_area
++bool headless
++int grab_interval_ms
++bool idle_check_enabled
++int idle_check_start_hour
++int idle_check_end_hour
++EmailNotifyConfig notify_email
+}
+class ClaimResult {
++CouponInfo coupon_info
++ClaimStatus status
++FailReason fail_reason
++datetime claimed_at
+}
+class ClaimStatus {
+<<enumeration>>
+SUCCESS = "success"
+FAILED = "failed"
+SKIPPED = "skipped"
+}
+class FailReason {
+<<enumeration>>
+ALREADY_CLAIMED = "already_claimed"
+NOT_STARTED = "not_started"
+OUT_OF_STOCK = "out_of_stock"
+LOGIN_EXPIRED = "login_expired"
+HTTP_ERROR = "http_error"
+UNKNOWN = "unknown"
+}
+ClaimResult --> ClaimStatus
+ClaimResult --> FailReason
+```
+
+**last_result.json 完整格式（schema_version=2）**：
+
+```json
+{
+  "schema_version": 2,
+  "latest": {
+    "schema_version": 1,
+    "executed_at": "2026-05-29T10:30:05.123456",
+    "summary": { "total": 1, "success": 1, "failed": 0, "skipped": 0 },
+    "items": [
+      {
+        "coupon_id": "grab_0",
+        "name": "百补好运券",
+        "denomination": 4.0,
+        "min_spend": 5.0,
+        "status": "success",
+        "fail_reason": null,
+        "claimed_at": "2026-05-29T10:30:05.456789"
+      }
+    ]
+  },
+  "history": [...]
+}
+```
+
+历史记录最多保留 50 条，最新在前。兼容旧格式（schema_version=1 单条记录）自动迁移。
+
+### 3.3 组件依赖关系
+
+```mermaid
+graph LR
+MAIN["main.py"] --> TRAY["pystray 托盘"]
+MAIN --> FLASK["Flask App"]
+FLASK --> SC["SchedulerController"]
+SC -->|subprocess| WORKER["worker.py"]
+WORKER --> CL["ConfigLoader"]
+WORKER --> AM["CredentialManager"]
+WORKER --> CR["CouponCrawler"]
+WORKER --> TR["TaskRunner"]
+TR --> AM
+TR --> CR
+TR --> RW["result_writer"]
+TR --> EN["email_notifier"]
+CR -->|on_credential_updated| AM
+```
+
+### 3.4 完整运行流程
 
 **启动阶段**
 
@@ -174,13 +292,67 @@ Playwright 的 `sync_api` 基于 greenlet，必须在同一线程内操作 brows
 | 每轮 | `page.reload(wait_until="commit")` + 监听 `hours_home_pub` 接口（超时 1500ms） |
 | 发现按钮 | 随机间隔（200~500ms）连点 3 次 |
 | T+1:06 起 | 检测「已领取」→ 成功；「已抢光/库存不足」→ 失败 |
-| T+1:25 | 停止轮询，写入结果文件，发邮件通知 |
+| T+1:25 | 停止轮询，`crawler.run()` 返回结果 |
+
+`crawler.run()` 返回后，`TaskRunner` 负责写入结果文件并发邮件通知（若已配置）。
+
+**任务执行时序**：
+
+```mermaid
+sequenceDiagram
+participant Loop as "主循环"
+participant TR as "TaskRunner"
+participant AM as "CredentialManager"
+participant CR as "CouponCrawler"
+participant RW as "result_writer"
+participant EN as "email_notifier"
+
+Loop->>TR : run()
+TR->>AM : is_valid()
+alt 凭证有效
+TR->>AM : get_headers()
+TR->>CR : set_session_cookie(session_cookie)
+TR->>CR : run(force=False)
+Note over CR : 触发分钟:30 预备，:50 预热刷新（正负随机1000ms）<br/>:55 开始刷新，发现「立即抢券」连点 3 次<br/>开抢分钟:25 结束
+CR-->>TR : results
+TR->>RW : write_result(results, task_time)
+Note over RW : 原子写入，保留最近 50 条历史
+TR->>EN : send_result_email()（若已配置）
+else 凭证失效
+TR->>TR : 记录凭证失效日志
+end
+```
+
+**浏览器自动化流程**：
+
+```mermaid
+flowchart TD
+Start(["worker 启动"]) --> EnsureBrowser["_ensure_browser()<br/>启动 Edge，打开活动页"]
+EnsureBrowser --> LoginCheck{"检测到登录页？"}
+LoginCheck --> |是| WaitLogin["等待用户扫码登录（最多5分钟）"]
+WaitLogin --> SaveCookie["提取登录凭证，调用 update_credential()"]
+SaveCookie --> Ready["浏览器就绪，等待触发时间"]
+LoginCheck --> |否| Ready
+
+Ready --> Trigger["到达触发时间"]
+Trigger --> Phase1["触发分钟:30 前：等待"]
+Phase1 --> Phase2["触发分钟:30~:55：打开页面预备<br/>:50（正负随机1000ms）预热刷新一次"]
+Phase2 --> Phase3["触发分钟:55 开始：高频刷新"]
+Phase3 --> WaitLoad["等待 hours_home_pub 接口响应（1.5s）"]
+WaitLoad --> SwitchTab["切换到「正在抢券中」tab"]
+SwitchTab --> Found{"发现「立即抢券」？"}
+Found --> |否| Phase3
+Found --> |是| Click["1 秒内随机间隔连点 3 次"]
+Click --> Check["开抢分钟:06 后检查结果"]
+Check --> Return["返回结果列表"]
+Phase3 --> |开抢分钟:25 后| Stop["停止轮询，返回结果"]
+```
 
 **停止任务阶段**
 
 1. 用户点「停止任务」→ `SchedulerController.stop()` 写入 stop_flag
 2. worker 主循环检测到，标记 `crawler._stopped = True`，删除标志文件
-3. `crawler.close()`：先 `goto("about:blank")` 再关闭 context/browser/playwright
+3. `crawler.close()`：先 `page.goto("about:blank")` 再关闭 context/browser/playwright
 4. 主进程等待最多 15 秒，超时强制 kill
 
 
@@ -208,6 +380,56 @@ Playwright 的 `sync_api` 基于 greenlet，必须在同一线程内操作 brows
 
 **调度实现**：不使用 APScheduler，用最简单的 `while True + time.sleep(1)` 主循环，每秒调用 `_should_trigger()` 比较当前时间与 cron 中的分钟/小时。同一分钟内用 `trigger_key`（`YYYY-MM-DD HH:MM` 字符串）防重复触发。
 
+**`_should_trigger()` 实现**：
+
+```python
+def _should_trigger(schedule, last_trigger_key):
+    now = datetime.now()
+    for cron in schedule:
+        parts = cron.strip().split()
+        minute = int(parts[0])
+        hour = int(parts[1]) if parts[1] != '*' else -1
+        if now.minute == minute and (hour == -1 or now.hour == hour):
+            key = now.strftime(f"%Y-%m-%d %H:{minute:02d}")
+            if key != last_trigger_key:
+                return True, key
+    return False, last_trigger_key
+```
+
+只解析 cron 的第1字段（分钟）和第2字段（小时），不支持 `*/5`、范围等复杂语法。
+
+**Worker 启动时序**：
+
+```mermaid
+sequenceDiagram
+participant SC as "SchedulerController"
+participant W as "worker.py"
+participant AM as "CredentialManager"
+participant CR as "CouponCrawler"
+participant B as "Edge 浏览器"
+
+SC->>W : subprocess.Popen(worker.py --config ...)
+W->>W : 加载配置
+W->>AM : initialize()
+W->>AM : get_headers()
+AM-->>W : {"Cookie": "...", "User-Agent": "..."}
+W->>CR : set_session_cookie(headers["Cookie"])
+W->>W : 检查 stop_flag（关卡①）
+W->>CR : _ensure_browser()
+CR->>B : 启动 Edge，打开活动页
+Note over B : 若 Cookie 过期则等待用户登录
+B-->>CR : 浏览器就绪
+W->>W : 检查 stop_flag（关卡②）
+W->>W : 打印"浏览器已就绪，等待触发时间..."
+loop 每秒检查
+W->>W : 检查 stop_flag（关卡③）
+W->>W : _should_trigger()
+alt 到达触发时间
+W->>W : task_runner.run()
+end
+end
+```
+
 **三道关卡防竞态**（浏览器启动前）：
 1. 初始化完成后、`_ensure_browser()` 前检查 stop_flag
 2. 浏览器启动完成后再次检查 stop_flag
@@ -229,19 +451,157 @@ Playwright 的 `sync_api` 基于 greenlet，必须在同一线程内操作 brows
 
 **加密方案**：`cryptography.fernet.Fernet`（AES-128-CBC + HMAC-SHA256），密钥和密文分两个文件存储。
 
+**类结构**：
+
+```mermaid
+classDiagram
+class CredentialManager {
+-_config : CredentialConfig
+-_store_path : str
+-_key_path : str
+-_logger : Logger
+-_valid : bool
+-_fernet : Fernet
++initialize() void
++get_headers() dict
++update_credential(session_cookie) void
++mark_invalid() void
++is_valid() bool
+-_load_or_create_key() Fernet
+-_encrypt(plaintext) bytes
+-_decrypt(ciphertext) str
+}
+```
+
+**初始化策略**：
+
+```mermaid
+flowchart TD
+Start(["initialize()"]) --> HasCookie{"config.cookie 非空？"}
+HasCookie --> |是| Encrypt["加密写入 credentials.enc<br/>（始终覆盖，保证更新即时生效）"]
+HasCookie --> |否| HasStore{"credentials.enc 存在？"}
+HasStore --> |是| UseStore["使用已存储凭证（无需解密）"]
+HasStore --> |否| Raise["抛出 LoginExpiredError<br/>（worker 继续启动，等待浏览器登录）"]
+```
+
+**凭证流转时序**：
+
+```mermaid
+sequenceDiagram
+participant W as "worker.py"
+participant AM as "CredentialManager"
+participant CR as "CouponCrawler"
+participant TR as "TaskRunner"
+
+W->>AM : initialize()
+Note over AM : 从 config.yaml 或 credentials.enc 加载
+W->>AM : get_headers()
+AM-->>W : {"Cookie": "...", "User-Agent": "..."}
+W->>CR : set_session_cookie(headers["Cookie"])
+W->>CR : _ensure_browser()
+Note over CR : 若登录过期，等待用户扫码登录
+CR->>AM : on_credential_updated(new_cookie)
+AM->>AM : update_credential() 加密保存
+
+loop 每次任务
+TR->>AM : is_valid()
+TR->>AM : get_headers()
+TR->>CR : set_session_cookie(session_cookie)
+TR->>CR : run(force=False)
+CR-->>TR : results
+end
+```
+
 | 方法 | 说明 |
 |------|------|
 | `_load_or_create_key()` | 首次运行自动生成密钥写入 `data/fernet.key` |
 | `initialize()` | config.yaml 有 cookie → 覆盖写入加密文件；config 无 cookie + 加密文件存在 → 直接使用；两者都无 → 抛 `LoginExpiredError` |
 | `get_headers()` | 从加密文件解密 Cookie，组装含 UA 的请求头，日志中不记录明文 |
-| `update_credential()` | 浏览器扫码登录后回调，覆盖写入新 Cookie |
+| `update_credential()` | 浏览器扫码登录后回调，覆盖写入新 Cookie，设 `_valid = True` |
 | `mark_invalid()` / `is_valid()` | 内存中的 `_valid` 标志，失效后拒绝 `get_headers()` |
 
 **凭证双轨设计**：config.yaml 里的 cookie 字段仅作为"初始导入通道"，每次 `initialize()` 时若 config 有值就覆盖加密文件，然后程序运行后 cookie 始终从 `credentials.enc` 读取，Web 界面保存配置时始终写入空 cookie，不暴露凭证。
 
+**为什么用 Fernet 而不是直接用 AES**：Fernet = AES-128-CBC + HMAC-SHA256 + 时间戳，是"经过认证的加密"（AEAD）。解密前会验证 HMAC，防止密文被篡改；一个 `Fernet.encrypt/decrypt` 调用完成，不需要手动处理 IV/padding，相比手动用 `pycryptodome` 做 AES-CBC 更难出安全错误。
+
+**密钥文件与凭证文件分离**：单独泄露任意一个文件都无法解密，两个都泄露才危险。实际安全价值在于防止日志、配置文件误传时顺带泄露 Cookie 明文。
+
 ---
 
 ### 4.4 src/coupon_crawler.py — 领券执行器
+
+**完整方法列表**：
+
+```
+CouponCrawler
+├── set_session_cookie(session_cookie)      更新注入浏览器的 Cookie
+├── _ensure_browser()                       启动/复用浏览器
+├── _wait_for_login_if_needed(page, url)    检测并等待登录
+├── _extract_cookie_from_browser()          从浏览器提取 Cookie
+├── warmup()                               兼容接口（仅打印日志）
+├── close()                                关闭浏览器
+├── run(force=False)                        执行抢券
+├── _grab_coupons(page, force=False)        轮询抢券核心逻辑
+├── _switch_to_ongoing_tab(page)            切换到「正在抢券中」tab
+├── _check_result(page, coupon_info)        判断结果
+├── _close_popup(page)                      关闭弹窗
+└── idle_check()                           闲时巡检（浏览器未启动则静默跳过）
+```
+
+**浏览器生命周期**：
+
+```mermaid
+stateDiagram-v2
+[*] --> 未启动
+未启动 --> 已启动 : _ensure_browser()（worker 启动时调用）
+已启动 --> 已启动 : run()（复用浏览器）
+已启动 --> 已启动 : 断连检测到后自动重启（_ensure_browser 内部处理）
+已启动 --> 已关闭 : close()（先 page.goto about:blank 避免崩溃恢复弹窗）
+```
+
+**`_ensure_browser()` 流程**：
+
+```mermaid
+flowchart TD
+Start(["_ensure_browser()"]) --> Stopped{"_stopped=True？"}
+Stopped --> |是| Raise["抛 CrawlerError（已停止，不允许重启）"]
+Stopped --> |否| HasBrowser{"浏览器实例存在？"}
+HasBrowser --> |是| Connected{"连接正常且 page 可访问？"}
+Connected --> |是| Done["直接返回（复用）"]
+Connected --> |否| Restart["记录警告，关闭旧实例，重新启动"]
+HasBrowser --> |否| Launch["查找 Edge 路径，启动浏览器"]
+Launch --> NewContext["创建移动端上下文<br/>UA: Android Pixel 7 / 390×844<br/>is_mobile=True / has_touch=True"]
+NewContext --> InjectCookie{"有 Cookie？"}
+InjectCookie --> |是| AddCookies["context.add_cookies()"]
+InjectCookie --> |否| AntiDetect["注入反检测脚本 + 额外请求头"]
+AddCookies --> AntiDetect
+AntiDetect --> OpenPage["page.goto(url, wait_until=domcontentloaded)"]
+OpenPage --> LoginCheck["_wait_for_login_if_needed()"]
+LoginCheck --> WaitSelector["等待 .coupon-button-section（20秒）"]
+WaitSelector --> Done2["浏览器预热完成"]
+Restart --> Launch
+```
+
+**浏览器内自动登录（`_wait_for_login_if_needed`）**：
+
+```mermaid
+sequenceDiagram
+participant C as "CouponCrawler"
+participant B as "Edge 浏览器"
+participant U as "用户"
+participant A as "CredentialManager"
+
+C->>B : 打开活动页
+B-->>C : 跳转到登录页（URL 含 passport/plogin/login.jd.com）
+C->>C : _wait_for_login_if_needed()
+C->>U : 打印提示：请在浏览器中扫码登录
+Note over B,U : 用户在浏览器中完成登录（最多等待 5 分钟）
+B-->>C : 跳回活动页（URL 不含登录域名）
+C->>C : _extract_cookie_from_browser()
+C->>A : on_credential_updated(cookie_str)
+A->>A : update_credential() 加密保存
+C->>B : page.goto(target_url) 跳回活动页
+```
 
 #### 浏览器初始化（`_ensure_browser`）
 
@@ -279,26 +639,61 @@ stop_time      = open_minute    * 60 + 25   # 开抢分钟:25 结束
 
 预热时间在任务开始时随机一次（`preheat_trigger = preheat_time ± random(0, 1000ms)`），整个任务过程固定，不每轮重新随机。
 
+**按钮检测与点击流程**：
+
+```mermaid
+flowchart TD
+Reload["page.reload(wait_until=commit)"] --> WaitLoad["监听 hours_home_pub 接口响应（1.5s）"]
+WaitLoad --> Interval["等待 grab_interval_ms 毫秒"]
+Interval --> LoginCheck{"URL 含 login/passport？"}
+LoginCheck --> |是| ReLogin["_wait_for_login_if_needed()"]
+ReLogin --> Reload
+LoginCheck --> |否| SwitchTab["切换到「正在抢券中」tab"]
+SwitchTab --> Scan["遍历 .coupon-button-section"]
+Scan --> BtnText["读取 .coupon-button-text 文本"]
+BtnText --> IsGrab{"「立即抢券」或「立即领取」？"}
+IsGrab --> |是| Click["1 秒内随机间隔连点 3 次（间隔 200~500ms）"]
+Click --> Continue["继续下一轮"]
+IsGrab --> |否| AfterOpen{"开抢分钟:06 后且在「正在抢券中」tab？"}
+AfterOpen --> |是| CheckEnd{"「已领取」？"}
+CheckEnd --> |是| Success["返回 SUCCESS"]
+CheckEnd --> |否| CheckFail{"「已使用/已抢光」等？"}
+CheckFail --> |是| Fail["返回 FAILED（out_of_stock）"]
+CheckFail --> |否| Continue
+AfterOpen --> |否| Continue
+```
+
 **每轮刷新策略**：
 ```python
-# reload 后监听接口，不等整页加载
 with page.expect_response(
     lambda r: "hours_home_pub" in r.url and r.status == 200,
     timeout=1500
 ):
     page.reload(wait_until="commit")
-# 等配置的刷新间隔
 if grab_interval_ms > 0:
     page.wait_for_timeout(grab_interval_ms)
 ```
 
 然后补足随机间隔，保证每轮总时长在 1300~1600ms，防固定频率风控。
 
+**结果判定关键词表**（`_check_result()`）：
+
+| 关键词 | 结果 |
+|--------|------|
+| `领取成功`、`抢券成功`、`已放入`、`去使用` | SUCCESS |
+| `已领取`、`已抢到`、`已使用` | SKIPPED（already_claimed） |
+| `已抢完`、`库存不足`、`已售罄`、`已抢光` | FAILED（out_of_stock） |
+| `未开始`、`即将开抢`、`待开抢` | FAILED（not_started）→ 继续轮询 |
+| `系统繁忙`、`稍后重试`、`网络异常` | FAILED（not_started）→ 继续轮询 |
+| 无明确提示 | SUCCESS（默认） |
+
 **风控检测**：「销售火爆」连续出现 8 次（`RISK_CONTROL_THRESHOLD = 8`）才判定风控终止，偶发一两次继续刷，避免误判。
 
 **按钮点击**：发现「立即抢券」/「立即领取」后，1 秒内随机间隔连点 3 次（间隔 200~500ms）。
 
-**结果判定**：只在切换到「正在抢券中」tab 后、开抢分钟 `:06` 之后才判断，避免开抢前误判。
+**结果判定（两条路径）**：
+- **主路径（流程图）**：切换到「正在抢券中」tab 后，开抢分钟 `:06` 之后，读取按钮文字——`已领取` → SUCCESS，`已使用/已抢光` 等 → FAILED。这是轮询过程中的实时判定。
+- **辅助路径（`_check_result()`）**：点击按钮后等待页面出现结果关键词（见上表），用于补充判断。无论结果如何，`_grab_coupons` 最终以主路径判定为准，`_check_result` 是备用关键词匹配。
 
 #### 闲时巡检（`idle_check`）
 
@@ -308,6 +703,31 @@ if grab_interval_ms > 0:
 ---
 
 ### 4.5 src/task_runner.py — 任务编排器
+
+七步编排流程图：
+
+```mermaid
+flowchart TD
+Start(["run(force=False)"]) --> LogStart["记录任务开始时间"]
+LogStart --> CheckValid{"auth_manager.is_valid()？"}
+CheckValid --> |否| LogError["记录错误日志，返回"]
+CheckValid --> |是| GetHeaders["auth_manager.get_headers()"]
+GetHeaders --> SetCookie["crawler.set_session_cookie(session_cookie)"]
+SetCookie --> RunCrawler["crawler.run(force=force)"]
+RunCrawler --> WriteResult["result_writer.write_result(results, task_time)"]
+WriteResult --> SendEmail["email_notifier.send_result_email()（若已配置）"]
+SendEmail --> LogDone["记录完成日志（含统计）"]
+LogDone --> End(["结束"])
+
+RunCrawler --> |LoginExpiredError| MarkInvalid["auth_manager.mark_invalid()，记录日志"]
+MarkInvalid --> End
+
+RunCrawler --> |CrawlerError| LogFailed["记录错误日志"]
+LogFailed --> End
+
+RunCrawler --> |其他异常| LogException["logger.exception() 打完整堆栈"]
+LogException --> End
+```
 
 七步编排：
 
@@ -351,10 +771,54 @@ app.extensions["scheduler_controller"] = SchedulerController()
 | DELETE | `/api/logs` | 清空日志 |
 | GET | `/api/result` | 领券结果 + 历史 |
 
+#### scheduler_controller.py — 子进程管理
+
+**SchedulerController 类结构**：
+
+```mermaid
+classDiagram
+class SchedulerController {
+-_proc : Popen
+-_lock : Lock
+-_logger : Logger
++start(config_path) (bool, str)
++stop() (bool, str)
++stop_immediately() void
++run_now(config_path) (bool, str)
++get_status() dict
++is_running() bool
+-_pipe_output(proc) void
+}
+```
+
+两种停止接口的区别：
+
+| 方法 | 等待时间 | 适用场景 |
+|------|----------|----------|
+| `stop()` | 最多 15 秒 | Web 界面「停止任务」，给浏览器正常关闭留足时间 |
+| `stop_immediately()` | 最多 2 秒 | 托盘「退出」，快速终止，不在意浏览器关闭流程 |
+
+子进程 stdout 由后台线程 `_pipe_output()` 实时转发到主进程日志（加 `[worker]` 前缀），用户在 Web 界面日志区能看到 worker 的所有输出。线程设为 `daemon=True`，主进程退出时自动销毁，不会阻塞退出。
+
 #### auth_middleware.py — Basic Auth
 
+**认证流程**：
+
+```mermaid
+flowchart TD
+Request(["HTTP 请求"]) --> CheckPwd{"设置了 WEB_PASSWORD？"}
+CheckPwd --> |否| Warn["记录警告日志"]
+Warn --> Allow["放行"]
+CheckPwd --> |是| CheckPath{"路径为 / 或 /static/*？"}
+CheckPath --> |是| Allow
+CheckPath --> |否| ParseAuth["解析 Authorization: Basic <base64>"]
+ParseAuth --> Valid{"格式正确且密码匹配？"}
+Valid --> |是| Allow
+Valid --> |否| Return401["返回 401 + WWW-Authenticate 头"]
+```
+
 - 通过环境变量 `WEB_PASSWORD` 启用，未设置时放行所有请求
-- `/` 和 `/static/` 路径始终放行（防止登录页本身需要认证）
+- `/` 和 `/static/` 路径始终放行（防止认证页面本身需要认证）
 - 使用 `hmac.compare_digest()` 常量时间比较，防时序攻击
 
 #### config_api.py — 配置 API
@@ -385,17 +849,6 @@ while remaining > 0 and len(lines_found) <= n:
 
 **Schema 版本**：v2 格式包含 `latest`（最新一条）和 `history`（最多 50 条，最新在前）。兼容读取 v1 旧格式（单条记录）自动迁移。
 
-#### scheduler_controller.py — 子进程管理
-
-两种停止接口的区别：
-
-| 方法 | 等待时间 | 适用场景 |
-|------|----------|----------|
-| `stop()` | 最多 15 秒 | Web 界面「停止任务」，给浏览器正常关闭留足时间 |
-| `stop_immediately()` | 最多 2 秒 | 托盘「退出」，快速终止，不在意浏览器关闭流程 |
-
-子进程 stdout 由后台线程 `_pipe_output()` 实时转发到主进程日志（加 `[worker]` 前缀），用户在 Web 界面日志区能看到 worker 的所有输出。
-
 ---
 
 ### 4.7 src/email_notifier.py — 邮件通知
@@ -417,6 +870,36 @@ while remaining > 0 and len(lines_found) <= n:
 ```
 
 同时输出到文件和控制台（`StreamHandler`）。worker 子进程的 stdout 由主进程的 `_pipe_output` 线程捕获，写入同一个 `app.log`，因此日志中 worker 输出带 `[worker]` 前缀。
+
+---
+
+### 4.9 性能考量
+
+| 设计 | 说明 |
+|------|------|
+| 浏览器常驻 | worker 启动时立即打开浏览器，任务触发时直接复用，无冷启动延迟 |
+| 时间窗口动态计算 | 根据触发分钟数自动推算各阶段，适应任意触发时刻 |
+| 预热刷新 | 触发分钟:50（±随机1000ms，任务开始时固定一次）预热刷新，提前激活页面缓存，减少正式刷新时延迟 |
+| `wait_until="commit"` | 不等整页加载，只等响应头确认，比 `domcontentloaded` 快 200~800ms |
+| 随机间隔连点 | 发现按钮后 1 秒内随机间隔连点 3 次（200~500ms），模拟真人，降低风控风险 |
+| 原子写入 | config.yaml 和 last_result.json 均用临时文件 + `os.replace()` 原子写入 |
+| 日志异步转发 | worker stdout 通过后台 daemon 线程转发，不阻塞主循环 |
+
+---
+
+### 4.10 故障排查
+
+| 症状 | 可能原因 | 解决方法 |
+|------|----------|----------|
+| 端口被占用 | 5000 端口已有进程 | `python main.py --port 8080` |
+| worker 启动失败 | 配置文件错误 | 查看日志 `[worker]` 输出，检查 `config.yaml` |
+| 浏览器未弹出 | `headless: true` | 改为 `headless: false` |
+| 任务未触发 | cron 格式错误或系统时间不准 | 确认格式 `分 时 * * *`，分和时为具体数字 |
+| Cookie 过期 | 登录态失效（约 30 天） | 程序自动弹出浏览器，扫码重新登录；或运行 `python login.py` |
+| 密钥文件丢失 | `data/fernet.key` 被删除 | 删除 `data/credentials.enc`，重新登录 |
+| 托盘图标不显示 | pystray/Pillow 未安装 | `pip install pystray pillow` |
+| 浏览器崩溃后未恢复 | `_ensure_browser()` 检测到断连会自动重启 | 查看日志确认重启情况 |
+| 历史记录不显示 | 需要至少执行 2 次任务 | 正常现象，第 2 次起才有历史折叠区 |
 
 
 ---
@@ -584,7 +1067,7 @@ const older = history.slice(1);
 
 每条历史记录内嵌一个可展开的 `<details>`，点开显示该次的详情表格。
 
-`translateFailReason()` 把后端英文枚举值转为中文：`out_of_stock` → `券已抢完`，`login_required` → `需要重新登录`，支持精确匹配和模糊关键词匹配两种方式。
+`translateFailReason()` 把后端英文枚举值转为中文：`out_of_stock` → `券已抢完`，`login_expired` → `需要重新登录`，支持精确匹配和模糊关键词匹配两种方式。
 
 ---
 
@@ -698,6 +1181,48 @@ ConfigLoader.load()
 | 授权码掩码 | Web 界面返回的 auth_code 替换为 `••••••••`，前端传回掩码时后端保留原值不覆盖 |
 | 本地监听 | Flask 只监听 `127.0.0.1`，不对外暴露 |
 | 无数据外传 | 程序不向任何第三方服务器发送数据（邮件通知除外，仅发往用户自己的收件箱） |
+
+### 7.1 安全设计深度分析
+
+**为什么用 Fernet 而不是直接用 AES**
+
+Fernet = AES-128-CBC + HMAC-SHA256 + 时间戳，是"经过认证的加密"（AEAD）：
+- 解密前验证 HMAC，防止密文被篡改后静默解密出垃圾数据
+- 包含时间戳，过期密文可被拒绝（本项目未启用 TTL 校验，但机制在）
+- 一个 `Fernet.encrypt/decrypt` 调用搞定，不需手动处理 IV、padding、CBC mode
+
+相比手动用 `pycryptodome` 做 AES-CBC，Fernet 更难出安全错误，是 Python 生态里"傻瓜安全"的标准选择。
+
+**密钥与密文分离存储的意义**
+
+```
+data/fernet.key   ← 加密密钥
+data/credentials.enc  ← 加密后的 Cookie
+```
+
+- 只泄露 `credentials.enc` → 无法解密（缺密钥）
+- 只泄露 `fernet.key` → 无法获取凭证（缺密文）
+- 两者都泄露才危险 —— 但在本地桌面场景，能访问文件系统的人本来就能操作浏览器
+
+实际价值：防止 `config.yaml` 被用户截图分享、日志上传时顺带泄露 Cookie 明文。
+
+**login.py 重新登录时为何删除旧密钥文件**
+
+旧的 `fernet.key` 如果已泄露，用同一密钥加密新 Cookie 同样不安全。强制删除重新生成，每次登录后都是全新的加密环境：
+
+```python
+for f in ["data/credentials.enc", "data/fernet.key"]:
+    if os.path.exists(f):
+        os.remove(f)
+```
+
+**`hmac.compare_digest` 防时序攻击**
+
+普通字符串比较 `password == input` 在字符不匹配时提前返回，攻击者可通过测量响应时间推断密码前几位。`hmac.compare_digest()` 无论内容如何，始终花相同时间完成比较。
+
+**config.yaml 不存储 Cookie 的设计原因**
+
+`config.yaml` 会被用户备份、求助时截图分享。分离后 `config.yaml` 可以安全分享，凭证只在加密文件里。`POST /api/config` 写入时始终强制 `credential.cookie = ""`。
 
 ---
 
@@ -859,9 +1384,21 @@ if idle_check_enabled and time.time() >= next_idle_ts:
     next_idle_ts = _next_idle_check_ts()
 ```
 
-**忙时窗口跳过**：触发分钟 `:25` 到开抢分钟 `:30` 期间，`_is_busy_window()` 返回 True，闲时巡检主动跳过，不干扰定点抢券的时间窗口。
+**忙时窗口跳过**：触发分钟 `:25` 到开抢分钟 `:30` 期间，`_is_busy_window()` 返回 True，闲时巡检主动跳过，不干扰定点抢券的时间窗口。跨小时边界（如触发分钟=59，开抢分钟=0）时的处理：
 
-**随机偏移的意义**：固定 :01/:06 等整分触发容易被平台识别为机器人，±60s 偏移后触发时间在人类正常操作的范围内。
+```python
+trigger_start = minute * 60 + 25
+open_end      = ((minute + 1) % 60) * 60 + 30
+
+if open_end < trigger_start:          # 跨小时（如59分触发，0分开抢）
+    if cur_seconds >= trigger_start or cur_seconds <= open_end:
+        return True
+else:
+    if trigger_start <= cur_seconds <= open_end:
+        return True
+```
+
+**随机偏移的意义**：固定 :01/:06 等整分触发容易被平台识别为机器人，±60s 偏移后触发时间在人类正常操作的范围内。对齐到固定节拍而非简单的"每5分钟"，还有一个好处：多次运行的触发时间分布均匀，不会因累积偏移越来越晚。
 
 ---
 
@@ -926,7 +1463,36 @@ function pollLogs() {
 
 ---
 
-### 10.9 打包后子进程启动兼容
+### 10.9 子进程 stdout 管道转发
+
+**问题**：worker 子进程的 `print()` 输出（调度循环的状态信息）默认只写到子进程自己的 stdout，主进程日志文件看不到，Web 界面日志区也没有。
+
+**方案**：`SchedulerController.start()` 启动子进程时，通过后台 daemon 线程持续读取子进程 stdout，写入主进程的 logger：
+
+```python
+def _pipe_output(self, proc: subprocess.Popen) -> None:
+    try:
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                self._logger.info("[worker] %s", line)
+    except Exception:
+        pass
+
+threading.Thread(
+    target=self._pipe_output,
+    args=(self._proc,),
+    daemon=True,      # 主进程退出时自动销毁，不阻塞退出
+).start()
+```
+
+子进程用 `print(..., flush=True)` 输出确保实时性（不等缓冲区满）。结果就是 Web 界面日志区里能看到 worker 的所有状态行，且带 `[worker]` 前缀与主进程日志区分。
+
+**为什么不用 SIGTERM 替代标志文件**：Windows 下 `proc.terminate()` 实际等同 `TerminateProcess`，是立即强杀，浏览器来不及关闭，触发崩溃恢复弹窗。标志文件让 worker 自己决定何时退出，关闭流程可控。
+
+---
+
+### 10.10 打包后子进程启动兼容
 
 **问题**：源码运行时用 `python worker.py`；打包为 exe 后没有独立的 `python` 解释器和 `worker.py` 文件，直接调用会报错。
 
@@ -946,7 +1512,7 @@ def _get_worker_cmd(config_path, run_now=False, once=False):
 
 ---
 
-### 10.10 原子文件写入防损坏
+### 10.11 原子文件写入防损坏
 
 **问题**：配置文件或结果文件在写入过程中如果程序崩溃/断电，会产生半写入的损坏文件，下次启动时解析失败。
 
