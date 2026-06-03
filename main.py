@@ -99,12 +99,13 @@ def _run_tray(web_url: str) -> None:
 
     def _quit(icon, item):
         icon.stop()
-        # 通过 SchedulerController 正确终止 worker 子进程，等待浏览器干净关闭
+        # 通过 SchedulerController 正确终止 worker 子进程
+        # 先写 flag 让 worker 优雅退出，若 5 秒内未退出则强杀
         try:
             if _flask_app is not None:
                 controller = _flask_app.extensions.get("scheduler_controller")
                 if controller is not None:
-                    controller.stop()
+                    controller.stop_immediately()
         except Exception:
             pass
         # 用 os._exit 强制终止，避免 waitress/pystray 残留线程导致僵尸进程

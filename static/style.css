@@ -218,7 +218,7 @@ body {
   gap: 3px;
   border: 1px solid #d9d9d9;
   border-radius: 6px;
-  padding: 1px 6px;
+  padding: 2px 8px;
   background: #fff;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
@@ -242,6 +242,7 @@ body {
   text-align: center;
   -webkit-appearance: none;
   appearance: none;
+  vertical-align: middle;
 }
 
 .time-select:focus {

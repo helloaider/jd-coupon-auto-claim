@@ -138,6 +138,15 @@ def main() -> None:
     except Exception:
         pass
 
+    # 启动前再次检查停止标志（防止在初始化阶段期间就已经收到停止信号）
+    if os.path.exists(stop_flag):
+        print("[工作进程] 启动浏览器前检测到停止信号，取消启动", flush=True)
+        try:
+            os.remove(stop_flag)
+        except Exception:
+            pass
+        return
+
     # 启动时弹出浏览器（验证登录 / 让用户扫码）
     print("[工作进程] 正在启动浏览器...", flush=True)
     crawler._ensure_browser()
@@ -147,6 +156,7 @@ def main() -> None:
     # 若用户在浏览器启动过程中点了停止，此时标志已写入，直接关闭浏览器退出。
     if os.path.exists(stop_flag):
         print("[工作进程] 浏览器启动后检测到停止信号，正在关闭浏览器...", flush=True)
+        crawler._stopped = True
         try:
             os.remove(stop_flag)
         except Exception:

@@ -101,6 +101,36 @@ class SchedulerController:
                 self._proc = None
             return True, "任务已停止"
 
+    def stop_immediately(self) -> None:
+        """托盘退出时调用：写 flag 后立即强杀进程，不等待浏览器关闭流程。"""
+        with self._lock:
+            if self._proc is None or self._proc.poll() is not None:
+                self._proc = None
+                return
+            # 先写 flag，让 worker 内部有机会感知到（若已在主循环则会干净退出）
+            stop_flag = os.path.join(os.getcwd(), "data", ".stop_worker")
+            try:
+                with open(stop_flag, "w") as f:
+                    f.write("stop")
+            except Exception:
+                pass
+            # 给 worker 最多 2 秒自行退出（若还在 _ensure_browser 则不会感知，直接强杀）
+            try:
+                self._proc.wait(timeout=2)
+            except Exception:
+                pass
+            if self._proc.poll() is None:
+                try:
+                    self._proc.kill()
+                    self._proc.wait(timeout=3)
+                except Exception:
+                    pass
+            try:
+                os.remove(stop_flag)
+            except Exception:
+                pass
+            self._proc = None
+
     def run_now(self, config_path: str) -> tuple[bool, str]:
         """启动一个临时子进程立即执行一次，执行完自动退出，不影响正在运行的调度器。"""
         cmd = _get_worker_cmd(config_path, once=True)
