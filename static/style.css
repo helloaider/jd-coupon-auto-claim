@@ -29,6 +29,28 @@ body {
   margin-bottom: 24px;
 }
 
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 13px;
+  color: #888;
+  text-decoration: none;
+  padding: 4px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+  line-height: 1;
+}
+
+.github-link:hover {
+  color: #1a1a2e;
+  border-color: #aaa;
+  background: #f5f5f5;
+}
+
 .page-header h1 {
   font-size: 22px;
   font-weight: 600;
@@ -93,6 +115,7 @@ body {
 
 .form-group input[type="text"],
 .form-group input[type="password"],
+.form-group input[type="number"],
 .form-group select {
   width: 100%;
   padding: 8px 12px;
@@ -107,6 +130,7 @@ body {
 
 .form-group input[type="text"]:focus,
 .form-group input[type="password"]:focus,
+.form-group input[type="number"]:focus,
 .form-group select:focus {
   border-color: #4096ff;
   box-shadow: 0 0 0 2px rgba(64, 150, 255, 0.2);
@@ -152,19 +176,137 @@ body {
   outline: none;
 }
 
-/* Cron 列表：两列网格 */
+/* target-row 的输入框突破默认 max-width 限制 */
+.target-row input[type="text"] {
+  max-width: none;
+}
+
+.target-row .target-url {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.target-row .target-name {
+  flex: 0 0 120px;
+  width: 120px;
+}
+
+/* Cron 列表：横向流动排列，多条时间紧凑显示 */
 #cron-list {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 8px;
 }
 
-/* URL 输入框需要更宽，覆盖默认 max-width */
-.target-row .target-url,
-.target-row .target-name {
-  max-width: none;
+#target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
 }
+
+/* target-list 每行的 flex 容器间距和下方三列对齐 */
+.target-row {
+  gap: 32px !important;
+}
+
+/* 时间选择器行 */
+.cron-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  padding: 1px 6px;
+  background: #fff;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.cron-row:hover {
+  border-color: #4096ff;
+  box-shadow: 0 0 0 2px rgba(64,150,255,0.1);
+}
+
+.time-select {
+  padding: 0 2px;
+  border: none;
+  border-radius: 3px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #555;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+  width: 42px;
+  text-align: center;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.time-select:focus {
+  background: #f0f7ff;
+  border-radius: 3px;
+}
+
+.time-colon {
+  font-size: 13px;
+  font-weight: 600;
+  color: #888;
+  line-height: 1;
+  margin: 0;
+}
+
+.time-label {
+  font-size: 12px;
+  color: #bbb;
+  white-space: nowrap;
+}
+
+/* 巡检时间段小时选择器 */
+.idle-hour-select {
+  padding: 4px 8px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #555;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+  width: 90px;
+  max-width: 90px;
+  transition: border-color 0.2s;
+}
+
+.idle-hour-select:focus {
+  border-color: #4096ff;
+  box-shadow: 0 0 0 2px rgba(64,150,255,0.2);
+}
+
+.idle-min-fixed {
+  font-size: 14px;
+  color: #888;
+  font-weight: 500;
+}
+
+/* Cron 行内旧的描述标签（降级用） */
+.cron-desc {
+  flex: 1;
+  font-size: 12px;
+  color: #1677ff;
+  background: #f0f7ff;
+  border: 1px solid #bae0ff;
+  border-radius: 4px;
+  padding: 3px 8px;
+  min-height: 24px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* URL 输入框 focus 样式继承 list-row */
 .list-row input[type="text"]:focus {
   border-color: #4096ff;
   box-shadow: 0 0 0 2px rgba(64, 150, 255, 0.2);
@@ -172,19 +314,24 @@ body {
 
 .list-row .btn-remove {
   flex-shrink: 0;
-  padding: 5px 10px;
-  background: #fff;
-  border: 1px solid #ff4d4f;
-  color: #ff4d4f;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: #ccc;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 13px;
-  transition: background 0.2s, color 0.2s;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
 }
 
 .list-row .btn-remove:hover {
-  background: #ff4d4f;
-  color: #fff;
+  color: #ff4d4f;
 }
 
 /* ===== 按钮 ===== */
@@ -224,6 +371,17 @@ body {
 
 .btn-danger:hover:not(:disabled) {
   background: #ff7875;
+}
+
+/* 描边危险按钮（停止任务、清空等次要破坏性操作） */
+.btn-outline-danger {
+  background: #fff;
+  color: #ff4d4f;
+  border: 1px solid #ff4d4f;
+}
+
+.btn-outline-danger:hover:not(:disabled) {
+  background: #fff1f0;
 }
 
 .btn-secondary {
@@ -295,6 +453,34 @@ body {
 }
 
 /* ===== 日志面板 ===== */
+.log-section-header {
+  user-select: none;
+}
+
+.log-badge-warn {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #d46b08;
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+  border-radius: 10px;
+  padding: 1px 8px;
+  vertical-align: middle;
+}
+
+.log-badge-error {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #cf1322;
+  background: #fff1f0;
+  border: 1px solid #ffa39e;
+  border-radius: 10px;
+  padding: 1px 8px;
+  vertical-align: middle;
+}
+
 .log-content {
   background: #1e1e2e;
   color: #cdd6f4;
@@ -307,6 +493,7 @@ body {
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-all;
+  user-select: text;
 }
 
 /* 日志行颜色 */
@@ -316,6 +503,39 @@ body {
 
 .log-warning {
   color: #fab387;
+}
+
+/* ===== 历史记录徽章 ===== */
+.hist-badge {
+  display: inline-block;
+  font-size: 12px;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-weight: 500;
+}
+
+.hist-badge-success {
+  color: #389e0d;
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+}
+
+.hist-badge-failed {
+  color: #cf1322;
+  background: #fff1f0;
+  border: 1px solid #ffa39e;
+}
+
+.hist-badge-skipped {
+  color: #595959;
+  background: #fafafa;
+  border: 1px solid #d9d9d9;
+}
+
+.hist-badge-empty {
+  color: #8c8c8c;
+  background: #fafafa;
+  border: 1px solid #e8e8e8;
 }
 
 /* ===== 结果面板 ===== */
@@ -431,6 +651,7 @@ body {
   color: #555;
   margin-bottom: 6px;
   width: fit-content;
+  line-height: 1;
 }
 
 .toggle-switch {
@@ -476,6 +697,65 @@ body {
 
 .toggle-switch input:checked + .toggle-slider::before {
   transform: translateX(20px);
+}
+
+/* ===== 配置三列 Grid（URL行 + 行为设置行共享列宽） ===== */
+.config-grid3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px 24px;
+  margin-bottom: 4px;
+  align-items: start;
+}
+
+.config-grid3-span2 {
+  grid-column: span 2;
+}
+
+.config-grid3-span3 {
+  grid-column: span 3;
+}
+
+/* 分列容器内的输入框样式 */
+#target-url-col input,
+#target-name-col input {
+  width: 100%;
+  max-width: none;
+  padding: 7px 10px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+#target-url-col input:focus,
+#target-name-col input:focus {
+  border-color: #4096ff;
+  box-shadow: 0 0 0 2px rgba(64,150,255,0.2);
+}
+
+/* ===== 配置区块分割线 ===== */
+.section-divider {
+  border: none;
+  border-top: 1px dashed #e0e0e0;
+  margin: 20px 0;
+}
+
+/* ===== 配置区块小标题 ===== */
+.config-block-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1677ff;
+  letter-spacing: 0.3px;
+  margin-bottom: 14px;
+}
+
+/* ===== 配置表单底部操作区 ===== */
+.config-form-actions {
+  margin-top: 28px;
+  padding-top: 16px;
+  border-top: 1px solid #f0f0f0;
 }
 
 /* ===== 响应式 ===== */

@@ -12,6 +12,18 @@
     <header class="page-header">
       <h1>京东外卖定时优惠券抢券助手</h1>
       <span id="app-version" class="app-version"></span>
+      <a
+        class="github-link"
+        href="https://github.com/helloaider/jd-coupon-auto-claim"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="在 GitHub 上查看源码"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        GitHub
+      </a>
     </header>
 
     <!-- Tab 导航 -->
@@ -35,11 +47,11 @@
           <button type="button" class="btn btn-primary" id="start-btn" onclick="startScheduler()">
             启动任务
           </button>
-          <button type="button" class="btn btn-danger" id="stop-btn" onclick="stopScheduler()">
+          <button type="button" class="btn btn-outline-danger" id="stop-btn" onclick="stopScheduler()">
             停止任务
           </button>
-          <button type="button" class="btn btn-secondary" id="run-now-btn" onclick="runNow()">
-            测试效果
+          <button type="button" class="btn btn-secondary btn-sm" id="run-now-btn" onclick="runNow()" style="margin-left:4px;">
+            立即测试
           </button>
         </div>
       </section>
@@ -47,13 +59,20 @@
       <!-- 日志区 -->
       <section class="card" id="log-section">
         <div class="section-header">
-          <h2>运行日志</h2>
+          <h2 style="display:flex;align-items:center;gap:8px;">
+            运行日志
+            <span id="log-warning-badge" style="display:none;" class="log-badge-warn">有警告</span>
+            <span id="log-error-badge" style="display:none;" class="log-badge-error">有错误</span>
+          </h2>
           <div style="display:flex;gap:8px;align-items:center;">
             <button type="button" class="btn btn-secondary btn-sm" id="log-scroll-btn" onclick="toggleLogScroll()">
               ⏸ 暂停滚动
             </button>
-            <button type="button" class="btn btn-danger btn-sm" onclick="clearLogs()">
-              清空日志
+            <button type="button" class="btn btn-secondary btn-sm" onclick="copyLogs()">
+              复制日志
+            </button>
+            <button type="button" class="btn btn-outline-danger btn-sm" onclick="clearLogs()">
+              清空
             </button>
           </div>
         </div>
@@ -83,7 +102,8 @@
         <!-- 历史记录 -->
         <div id="result-history-wrapper" style="display:none; margin-top:16px;">
           <details id="result-history-details">
-            <summary style="cursor:pointer; color:#666; font-size:13px; user-select:none;">
+            <summary style="cursor:pointer; color:#888; font-size:13px; user-select:none; list-style:none; display:flex; align-items:center; gap:6px;">
+              <span style="color:#bbb;">▸</span>
               历史记录（最近 <span id="history-count">0</span> 次）
             </summary>
             <div id="result-history-list" style="margin-top:8px;"></div>
@@ -97,37 +117,44 @@
     <div id="tab-config" class="tab-panel" style="display:none">
 
       <section class="card" id="config-section">
-        <div class="section-header">
-          <h2>配置管理</h2>
-        </div>
         <form id="config-form" onsubmit="saveConfig(event)">
 
-          <!-- 红色区域：Cron 列表 + 活动 URL 列表，左右并列 -->
-          <div class="config-two-col" style="display:flex; gap:20px; margin-bottom:16px;">
+          <!-- 板块一：触发时间 & 活动目标 / 板块二：抢券行为设置 — 共用三列 grid -->
+          <div class="config-block-header">触发时间与活动目标</div>
 
-            <div class="form-group" style="flex:1; margin-bottom:0;">
-              <label>Cron 触发时间列表</label>
-              <div id="cron-list"></div>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="addCronRow('')">
-                + 添加 Cron 表达式
-              </button>
-              <small class="hint">标准五字段 cron，如 <code>29 10 * * *</code>（每天 10:29 触发）</small>
-            </div>
+          <div class="form-group">
+            <label>抢券触发时间</label>
+            <div id="cron-list"></div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addCronRow('')" style="margin-top:4px;">
+              + 添加时间
+            </button>
+            <small class="hint">每天在设定时间自动触发抢券，可添加多个</small>
+          </div>
 
-            <div class="form-group" style="flex:1; margin-bottom:0;">
-              <label>优惠券活动目标列表</label>
-              <div id="target-list"></div>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="addTargetRow('', '')">
+          <!-- 三列 grid：URL行 + 行为设置行共享列宽 -->
+          <div class="config-grid3">
+
+            <!-- URL 行：URL 跨前两列，名称占第三列 -->
+            <div class="form-group config-grid3-span2" style="margin-bottom:0;">
+              <label>优惠券活动目标</label>
+              <div id="target-url-col"></div>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="addTargetRow('', '')" style="margin-top:4px;">
                 + 添加活动 URL
               </button>
             </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label>备注名称</label>
+              <div id="target-name-col"></div>
+            </div>
 
-          </div>
+            <!-- 分割行 -->
+            <div class="config-grid3-span3">
+              <hr class="section-divider" style="margin:12px 0 8px;" />
+              <div class="config-block-header" style="margin-bottom:10px;">抢券行为设置</div>
+            </div>
 
-          <!-- 三列并列：收货地址编码 + 弹出浏览器窗口 + 抢券刷新间隔 -->
-          <div class="config-two-col" style="display:flex; gap:20px; margin-bottom:16px;">
-
-            <div class="form-group" style="flex:1; margin-bottom:0;">
+            <!-- 行为设置行：三列各一项 -->
+            <div class="form-group" style="margin-bottom:0;">
               <label class="toggle-label">
                 <span>弹出浏览器窗口</span>
                 <label class="toggle-switch">
@@ -138,21 +165,20 @@
               <small class="hint">开启：抢券时弹出浏览器窗口（可视化）；关闭：后台静默运行</small>
             </div>
 
-            <div class="form-group" style="flex:1; margin-bottom:0;">
+            <div class="form-group" style="margin-bottom:0;">
               <label for="grab-interval">抢券刷新间隔（毫秒）</label>
               <input
                 type="number"
                 id="grab-interval"
                 name="grab_interval_ms"
-                min="100"
-                max="2000"
                 step="100"
-                placeholder="100"
+                placeholder="300"
+                style="width:100%"
               />
-              <small class="hint">每次页面加载后额外等待的毫秒数，建议 100~2000，太快容易被风控</small>
+              <small class="hint">每次页面加载后额外等待的毫秒数，建议 200~2000，设置过小容易触发风控</small>
             </div>
 
-            <div class="form-group" style="flex:1; margin-bottom:0;">
+            <div class="form-group" style="margin-bottom:0;">
               <label for="jd-area">收货地址编码（jd_area）</label>
               <input
                 type="text"
@@ -166,44 +192,39 @@
 
           </div>
 
+          <!-- 板块三：闲时找券 -->
+          <div class="config-block-header">闲时找券</div>
           <div class="form-group">
             <label class="toggle-label">
-              <span>闲时找券</span>
+              <span>启用闲时找券</span>
               <label class="toggle-switch">
                 <input type="checkbox" id="idle-check-toggle" />
                 <span class="toggle-slider"></span>
               </label>
             </label>
-            <small class="hint">开启后，在非定点抢券时段内每隔约 5 分钟自动刷新一次页面，捡漏临时出现的可领取优惠券【建议在官方定点券未按时发放时才开启】</small>
+            <small class="hint">开启后，在非定点抢券时段内每隔约 5 分钟自动刷新一次页面，捡漏临时出现的可领取优惠券。建议在官方定点券未按时发放时才开启。</small>
           </div>
 
           <div class="form-group" id="idle-time-range-group">
-            <label>闲时找券时间段</label>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <input
-                type="number"
-                id="idle-start-hour"
-                min="0" max="23" step="1"
-                style="width:70px"
-                placeholder="10"
-              />
-              <span style="color:#666;">:01 &nbsp;到&nbsp;</span>
-              <input
-                type="number"
-                id="idle-end-hour"
-                min="0" max="23" step="1"
-                style="width:70px"
-                placeholder="18"
-              />
-              <span style="color:#666;">:56</span>
+            <label>巡检时间段</label>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <select id="idle-start-hour" class="idle-hour-select"></select>
+              <span class="idle-min-fixed">:01</span>
+              <span style="color:#aaa; font-size:13px;">到</span>
+              <select id="idle-end-hour" class="idle-hour-select"></select>
+              <span class="idle-min-fixed">:56</span>
             </div>
-            <small class="hint">仅在此时间段内巡检（小时数，0~23），默认 10 到 18</small>
+            <small class="hint">仅在此时间段内巡检，默认 10:01 到 18:56</small>
           </div>
 
+          <hr class="section-divider" />
+
+          <!-- 板块四：邮件通知 -->
+          <div class="config-block-header">QQ 邮箱通知</div>
           <!-- 邮件通知 -->
-          <div class="form-group" style="margin-top:8px;">
+          <div class="form-group">
             <label class="toggle-label">
-              <span>QQ 邮箱通知</span>
+              <span>启用邮箱通知</span>
               <label class="toggle-switch">
                 <input type="checkbox" id="email-notify-toggle" />
                 <span class="toggle-slider"></span>
@@ -213,26 +234,26 @@
           </div>
 
           <div id="email-notify-group" style="display:none;">
-            <div class="config-two-col" style="display:flex; gap:20px; margin-bottom:0;">
+            <div class="config-two-col" style="display:flex; gap:32px; margin-bottom:0; align-items:flex-start;">
               <div class="form-group" style="flex:1; margin-bottom:0;">
                 <label for="email-qq">QQ 号</label>
                 <input type="text" id="email-qq" placeholder="如：123456789" style="width:100%" />
-                <small class="hint">发件邮箱为该QQ号对应的邮箱</small>
+                <small class="hint">发件邮箱为该 QQ 号对应的邮箱</small>
               </div>
               <div class="form-group" style="flex:1; margin-bottom:0;">
                 <label for="email-auth-code">授权码</label>
                 <input type="password" id="email-auth-code" placeholder="QQ邮箱授权码（非登录密码）" style="width:100%" />
-                <small class="hint">在QQ邮箱设置 → 账号与安全 → 安全设置 -> 开启 SMTP(POP3/IMAP/SMTP/Exchange/CardDAV 服务) → 生成授权码</small>
+                <small class="hint">QQ邮箱设置 → 账号与安全 → 安全设置 → 开启 SMTP 服务 → 生成授权码</small>
               </div>
               <div class="form-group" style="flex:1; margin-bottom:0;">
                 <label for="email-receiver">收件人邮箱</label>
                 <input type="text" id="email-receiver" placeholder="留空则发给自己（同 QQ 邮箱）" style="width:100%" />
-                <small class="hint">留空则发送到发件QQ对应邮箱</small>
+                <small class="hint">留空则发送到发件 QQ 对应邮箱</small>
               </div>
             </div>
           </div>
 
-          <div class="form-actions" style="margin-top:24px;">
+          <div class="form-actions config-form-actions">
             <button type="submit" class="btn btn-primary" id="save-btn">保存配置</button>
           </div>
         </form>

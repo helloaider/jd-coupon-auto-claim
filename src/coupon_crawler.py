@@ -59,6 +59,7 @@ class CouponCrawler:
         self._page = None
         self._on_credential_updated = on_credential_updated
         self._grab_interval_ms = grab_interval_ms  # 刷新间隔（毫秒）
+        self._stopped = False  # 是否已主动关闭，防止 close() 后 _ensure_browser() 重新启动
 
     def set_session_cookie(self, session_cookie: str) -> None:
         self._session_cookie = session_cookie
@@ -80,6 +81,10 @@ class CouponCrawler:
 
     def _ensure_browser(self) -> None:
         """确保浏览器已启动并完成预热，如果没有则启动。"""
+        # 已调用 close() 主动停止，不再重新启动
+        if self._stopped:
+            raise CrawlerError("爬虫已停止，不允许重新启动浏览器")
+
         from playwright.sync_api import sync_playwright
 
         if self._browser is not None:
@@ -254,13 +259,8 @@ class CouponCrawler:
 
     def close(self) -> None:
         """关闭浏览器，程序退出时调用。"""
+        self._stopped = True  # 标记已停止，阻止 _ensure_browser() 重新启动
         try:
-            # 先导航到 about:blank，让 Edge 认为是正常退出，避免触发崩溃恢复弹窗
-            if self._page:
-                try:
-                    self._page.goto("about:blank", timeout=3000)
-                except Exception:
-                    pass
             if self._context:
                 try:
                     self._context.close()
@@ -322,7 +322,7 @@ class CouponCrawler:
         clicked = False
         self._preheat_done = False
         risk_control_count = 0          # 连续出现「销售火爆」的次数
-        RISK_CONTROL_THRESHOLD = 5      # 连续 N 次才判定为风控
+        RISK_CONTROL_THRESHOLD = 8      # 连续 N 次才判定为风控
 
         # 记录触发时的分钟数，用于动态计算时间窗口
         trigger_minute = datetime.now().minute
@@ -333,7 +333,7 @@ class CouponCrawler:
         ready_start   = trigger_minute * 60 + 30   # 触发分钟:30 开始预备
         preheat_time  = trigger_minute * 60 + 50   # 触发分钟:50 预热刷新一次
         refresh_start = trigger_minute * 60 + 55   # 触发分钟:55 开始正常刷新
-        stop_time     = open_minute * 60 + 20       # 开抢分钟:20 结束
+        stop_time     = open_minute * 60 + 25       # 开抢分钟:25 结束
 
         # 预热刷新触发时间：在 :50 正负随机 1000ms，只在任务开始时随机一次
         import random as _r
@@ -375,13 +375,20 @@ class CouponCrawler:
                     page.wait_for_timeout(min(wait_secs * 1000, 1000))
                     continue
 
+                # 预热已完成但还没到 :55，继续等待
+                if total_seconds < refresh_start:
+                    wait_secs = refresh_start - total_seconds
+                    self._logger.info("预热完成，距离 %d:%02d:55 还有 %d 秒，等待中...", now.hour, trigger_minute, wait_secs)
+                    page.wait_for_timeout(min(wait_secs * 1000, 1000))
+                    continue
+
                 # 结束时间后停止（如果已点击过，再给一轮确认结果）
                 if total_seconds >= stop_time:
                     if clicked and attempt < 59:
                         # 已点击，再刷一次看结果
                         self._logger.info("时间到但已点击，再刷一次确认结果...")
                     else:
-                        self._logger.info("已过 %d:%02d:20，停止轮询", now.hour, open_minute)
+                        self._logger.info("已过 %d:%02d:25，停止轮询", now.hour, open_minute)
                         break
             else:
                 # force 模式（测试效果）：最多刷 20 次后停止
@@ -418,7 +425,7 @@ class CouponCrawler:
                     self._logger.warning(
                         "页面出现「销售火爆，请稍后再试」（连续第 %d 次）%s",
                         risk_control_count,
-                        "，继续刷新..." if risk_control_count < RISK_CONTROL_THRESHOLD else "，判定为风控，终止抢券",
+                        "，继续刷新..." if risk_control_count < RISK_CONTROL_THRESHOLD else f"，连续 {RISK_CONTROL_THRESHOLD} 次刷新提示销售火爆，判定可能为风控，暂时终止抢券",
                     )
                     if risk_control_count >= RISK_CONTROL_THRESHOLD:
                         return [ClaimResult(
@@ -482,7 +489,7 @@ class CouponCrawler:
                         self._logger.warning(
                             "按钮显示「销售火爆，请稍后再试」（连续第 %d 次）%s",
                             risk_control_count,
-                            "，继续刷新..." if risk_control_count < RISK_CONTROL_THRESHOLD else "，判定为风控，终止抢券",
+                            "，继续刷新..." if risk_control_count < RISK_CONTROL_THRESHOLD else f"，连续 {RISK_CONTROL_THRESHOLD} 次刷新提示销售火爆，判定可能为风控，暂时终止抢券",
                         )
                         if risk_control_count >= RISK_CONTROL_THRESHOLD:
                             return [ClaimResult(

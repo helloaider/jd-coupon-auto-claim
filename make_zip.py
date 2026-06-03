@@ -2,6 +2,7 @@
 import glob
 import os
 import re
+import shutil
 import zipfile
 
 with open("src/version.py", encoding="utf-8") as f:
@@ -13,18 +14,26 @@ if not m:
     raise SystemExit(1)
 
 v = m.group()
-zip_name = f"dist/京东外卖定时优惠券抢券助手_v{v}.zip"
-exe_pattern = f"dist/京东外卖定时优惠券抢券助手_v{v}.exe"
+zip_name = "dist/京东外卖定时优惠券抢券助手.zip"
+exe_pattern = "dist/京东外卖定时优惠券抢券助手.exe"
+readme_src  = "dist/使用说明.txt"
+readme_dst  = f"dist/使用说明_v{v}.txt"
 
 exe_files = glob.glob(exe_pattern)
 if not exe_files:
     print(f"未找到 exe 文件：{exe_pattern}")
     raise SystemExit(1)
 
-files = exe_files + ["dist/config.yaml", "dist/使用说明.txt"]
+# 生成带版本号的使用说明副本
+shutil.copy2(readme_src, readme_dst)
+
+files = exe_files + ["dist/config.yaml", readme_dst]
 
 with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as z:
     for f in files:
         z.write(f, os.path.basename(f))
+
+# 清理临时副本
+os.remove(readme_dst)
 
 print(f"zip 已生成：{zip_name}")

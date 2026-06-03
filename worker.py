@@ -116,11 +116,14 @@ def main() -> None:
     except Exception:
         pass
 
+    # 启动时不立即弹浏览器，等到第一次任务触发时才启动
+    # 这样停止任务/退出时不会先弹出浏览器再关闭
+    print("[工作进程] 初始化完成，等待触发时间...", flush=True)
+
     # stop_flag 路径，供后续主循环和停止检测复用
     stop_flag = os.path.join("data", ".stop_worker")
 
-    # 启动前检查停止标志：若 Web 侧在进程刚起来时就写入了 stop_flag，
-    # 说明本次启动是多余的（如快速点启动→停止），直接退出，不打开浏览器。
+    # 启动前检查停止标志（快速点启停时的保护）
     if os.path.exists(stop_flag):
         print("[工作进程] 检测到停止信号，取消启动", flush=True)
         try:
@@ -266,7 +269,7 @@ def main() -> None:
 
     def _is_busy_window(schedule: list[str]) -> bool:
         """
-        检查当前时间是否处于定点抢券的忙时窗口（触发分钟:25 ~ 开抢分钟:35）。
+        检查当前时间是否处于定点抢券的忙时窗口（触发分钟:25 ~ 开抢分钟:30）。
         在此窗口内闲时巡检主动跳过，不干扰定点任务。
         """
         now = datetime.now()
@@ -283,7 +286,7 @@ def main() -> None:
             if hour != -1 and now.hour != hour:
                 continue
             trigger_start = minute * 60 + 25
-            open_end = ((minute + 1) % 60) * 60 + 25  # 开抢分钟:25 后完全结束（与抢券结束时间 :20 留5s余量）
+            open_end = ((minute + 1) % 60) * 60 + 30  # 开抢分钟:30 后完全结束（与抢券结束时间 :25 留5s余量）
             # 跨分钟边界（如触发59分，开抢0分）
             if open_end < trigger_start:
                 if cur_seconds >= trigger_start or cur_seconds <= open_end:
@@ -300,6 +303,7 @@ def main() -> None:
             # 检测退出标志文件
             if os.path.exists(stop_flag):
                 logger.info("检测到退出信号，正在关闭...")
+                crawler._stopped = True  # 先标记，阻止任何后续路径重新启动浏览器
                 try:
                     os.remove(stop_flag)
                 except Exception:

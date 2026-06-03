@@ -69,8 +69,8 @@ async function loadConfig() {
     }
 
     // 活动 URL 列表
-    const targetList = document.getElementById('target-list');
-    targetList.innerHTML = '';
+    document.getElementById('target-url-col').innerHTML  = '';
+    document.getElementById('target-name-col').innerHTML = '';
     const targets = data.coupon_targets || [];
     if (targets.length === 0) {
       addTargetRow('', '');
@@ -131,17 +131,16 @@ async function saveConfig(event) {
   saveBtn.textContent = '保存中...';
 
   try {
-    // 收集 Cron 列表
-    const cronInputs = document.querySelectorAll('#cron-list .cron-input');
-    const schedule = Array.from(cronInputs)
-      .map(el => el.value.trim())
-      .filter(v => v !== '');
+    // 收集触发时间列表（时间选择器 → cron 表达式）
+    const cronRows = document.querySelectorAll('#cron-list .cron-row');
+    const schedule = Array.from(cronRows).map(row => timeToCron(row));
 
-    // 收集活动 URL 列表
-    const targetRows = document.querySelectorAll('#target-list .target-row');
-    const coupon_targets = Array.from(targetRows).map(row => ({
-      url: row.querySelector('.target-url').value.trim(),
-      name: row.querySelector('.target-name').value.trim(),
+    // 收集活动 URL 列表（URL 和名称分列存放，按顺序配对）
+    const urlInputs  = document.querySelectorAll('#target-url-col .target-url');
+    const nameInputs = document.querySelectorAll('#target-name-col .target-name');
+    const coupon_targets = Array.from(urlInputs).map((urlEl, i) => ({
+      url:  urlEl.value.trim(),
+      name: nameInputs[i] ? nameInputs[i].value.trim() : '',
     })).filter(t => t.url !== '');
 
     // 推送服务（保留字段兼容旧配置，不在界面展示，保存时不覆盖）
@@ -298,6 +297,8 @@ async function stopScheduler() {
     if (resp.ok) {
       showToast(data.message || '任务已停止', 'success');
       await fetchStatus();
+      // 任务停止后主动拉一次最新日志，之后轮询不再更新
+      await loadLogs();
     } else {
       showToast(data.message || '停止失败', 'error');
     }
@@ -356,15 +357,22 @@ async function loadLogs() {
 }
 
 /**
- * 将日志行渲染到 #log-content
+ * 将日志行渲染到 #log-content，并更新标题徽章
+ * 若用户正在选中文字，或内容未发生变化，则跳过 DOM 更新以保护选区
  */
 function renderLogs(lines) {
   const logEl = document.getElementById('log-content');
 
   if (!lines || lines.length === 0) {
-    logEl.innerHTML = '暂无日志';
+    if (logEl.innerHTML !== '暂无日志') {
+      logEl.innerHTML = '暂无日志';
+    }
+    _updateLogBadges(false, false);
     return;
   }
+
+  const hasError   = lines.some(l => l.includes('ERROR'));
+  const hasWarning = lines.some(l => l.includes('WARNING') || l.includes('WARN'));
 
   // 构建带颜色的 HTML
   const html = lines.map(line => {
@@ -377,12 +385,39 @@ function renderLogs(lines) {
     return escaped;
   }).join('\n');
 
+  // 内容相同则不更新 DOM（避免破坏选区）
+  if (logEl.innerHTML === html) {
+    _updateLogBadges(hasWarning, hasError);
+    return;
+  }
+
+  // 用户正在 log-content 内选中文字时，跳过本次更新
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+    const range = sel.getRangeAt(0);
+    if (logEl.contains(range.commonAncestorContainer)) {
+      _updateLogBadges(hasWarning, hasError);
+      return;
+    }
+  }
+
   logEl.innerHTML = html;
+  _updateLogBadges(hasWarning, hasError);
 
   // 仅在自动滚动开启时滚动到底部
   if (state.logAutoScroll) {
     logEl.scrollTop = logEl.scrollHeight;
   }
+}
+
+/**
+ * 更新日志标题区的警告/错误徽章
+ */
+function _updateLogBadges(hasWarning, hasError) {
+  const warnBadge  = document.getElementById('log-warning-badge');
+  const errorBadge = document.getElementById('log-error-badge');
+  if (warnBadge)  warnBadge.style.display  = hasWarning ? '' : 'none';
+  if (errorBadge) errorBadge.style.display = hasError   ? '' : 'none';
 }
 
 /**
@@ -407,9 +442,36 @@ function toggleLogScroll() {
 
 /**
  * 轮询日志（每 3 秒）
+ * 仅在调度器运行中时才拉取新日志；停止后不再刷新
  */
 function pollLogs() {
-  setInterval(loadLogs, 3000);
+  setInterval(() => {
+    if (state.schedulerRunning) {
+      loadLogs();
+    }
+  }, 3000);
+}
+
+/**
+ * 复制日志到剪贴板
+ */
+async function copyLogs() {
+  const logEl = document.getElementById('log-content');
+  const text = logEl.innerText || logEl.textContent || '';
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('日志已复制', 'success');
+  } catch (_) {
+    // 降级：创建临时 textarea
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('日志已复制', 'success');
+  }
 }
 
 /**
@@ -458,7 +520,7 @@ function renderResult(result) {
   const tbody = document.getElementById('result-tbody');
 
   if (!result) {
-    summaryEl.textContent = '尚未执行过任务';
+    summaryEl.innerHTML = '<span style="color:#aaa;">尚未执行过任务</span>';
     tableWrapper.style.display = 'none';
     return;
   }
@@ -469,11 +531,18 @@ function renderResult(result) {
     ? new Date(result.executed_at).toLocaleString('zh-CN')
     : '未知时间';
 
+  // 全为 0 时给出友好提示
+  const total = (summary.success || 0) + (summary.failed || 0) + (summary.skipped || 0);
+  const emptyHint = total === 0
+    ? '<span style="color:#faad14;font-size:12px;margin-left:8px;">本次未找到可领取的券</span>'
+    : '';
+
   summaryEl.innerHTML = `
-    <div style="margin-bottom:8px;color:#888;font-size:13px;">执行时间：${executedAt}</div>
+    <div style="margin-bottom:8px;color:#aaa;font-size:12px;">执行时间：${executedAt}</div>
     <span class="summary-item summary-success">成功 <strong>${summary.success || 0}</strong></span>
     <span class="summary-item summary-failed">失败 <strong>${summary.failed || 0}</strong></span>
     <span class="summary-item summary-skipped">已领取 <strong>${summary.skipped || 0}</strong></span>
+    ${emptyHint}
   `;
 
   // 详情表格
@@ -481,7 +550,7 @@ function renderResult(result) {
   tbody.innerHTML = '';
 
   if (items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888;">无券详情</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:16px;">本次未找到可领取的券</td></tr>';
   } else {
     items.forEach(item => {
       const statusClass = getStatusClass(item.status);
@@ -498,7 +567,7 @@ function renderResult(result) {
         <td>${denomination}</td>
         <td>${minSpend}</td>
         <td><span class="${statusClass}">${statusText}</span></td>
-        <td>${escapeHtml(item.fail_reason || '-')}</td>
+        <td>${escapeHtml(translateFailReason(item.fail_reason))}</td>
         <td>${claimedAt}</td>
       `;
       tbody.appendChild(tr);
@@ -533,16 +602,16 @@ function renderHistory(history) {
       ? new Date(entry.executed_at).toLocaleString('zh-CN')
       : '未知时间';
     const successBadge = summary.success > 0
-      ? `<span class="summary-item summary-success" style="font-size:12px;">成功 ${summary.success}</span>`
+      ? `<span class="hist-badge hist-badge-success">✓ 成功 ${summary.success} 张</span>`
       : '';
     const failedBadge = summary.failed > 0
-      ? `<span class="summary-item summary-failed" style="font-size:12px;">失败 ${summary.failed}</span>`
+      ? `<span class="hist-badge hist-badge-failed">✗ 失败 ${summary.failed} 张</span>`
       : '';
     const skippedBadge = summary.skipped > 0
-      ? `<span class="summary-item summary-skipped" style="font-size:12px;">已领取 ${summary.skipped}</span>`
+      ? `<span class="hist-badge hist-badge-skipped">已领取 ${summary.skipped} 张</span>`
       : '';
     const noBadge = (!summary.success && !summary.failed && !summary.skipped)
-      ? `<span style="color:#aaa;font-size:12px;">无结果</span>`
+      ? `<span class="hist-badge hist-badge-empty">未找到可领券</span>`
       : '';
 
     // 明细表格
@@ -561,7 +630,7 @@ function renderHistory(history) {
           <td>${denomination}</td>
           <td>${minSpend}</td>
           <td><span class="${statusClass}">${statusText}</span></td>
-          <td>${escapeHtml(item.fail_reason || '-')}</td>
+          <td>${escapeHtml(translateFailReason(item.fail_reason))}</td>
           <td>${claimedAt}</td>
         </tr>`;
     }).join('');
@@ -600,11 +669,37 @@ function getStatusClass(status) {
 
 function getStatusText(status) {
   switch (status) {
-    case 'success': return '成功';
-    case 'failed':  return '失败';
+    case 'success': return '✓ 成功';
+    case 'failed':  return '✗ 失败';
     case 'skipped': return '已领取';
     default:        return status || '未知';
   }
+}
+
+/**
+ * 将英文失败原因转为用户可读中文
+ */
+function translateFailReason(reason) {
+  if (!reason || reason === '-') return '-';
+  const map = {
+    'out_of_stock':      '券已抢完',
+    'not_found':         '未找到券',
+    'timeout':           '请求超时',
+    'login_required':    '需要重新登录',
+    'already_claimed':   '已领取过',
+    'not_started':       '活动未开始',
+    'ended':             '活动已结束',
+    'limit_reached':     '已达领取上限',
+    'network_error':     '网络异常',
+    'unknown':           '未知原因',
+  };
+  // 精确匹配
+  if (map[reason]) return map[reason];
+  // 模糊匹配常见关键词
+  if (reason.toLowerCase().includes('timeout')) return '请求超时';
+  if (reason.toLowerCase().includes('stock'))   return '券已抢完';
+  if (reason.toLowerCase().includes('login'))   return '需要重新登录';
+  return reason;
 }
 
 // ===== 闲时找券联动 =====
@@ -629,6 +724,18 @@ function _updateEmailNotifyVisibility() {
 
 // 绑定开关变化事件（在 DOMContentLoaded 后执行）
 document.addEventListener('DOMContentLoaded', () => {
+  // 初始化巡检时间段小时选择器
+  ['idle-start-hour', 'idle-end-hour'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    for (let h = 0; h <= 23; h++) {
+      const opt = document.createElement('option');
+      opt.value = h;
+      opt.textContent = String(h).padStart(2, '0');
+      sel.appendChild(opt);
+    }
+  });
+
   const idleToggle = document.getElementById('idle-check-toggle');
   if (idleToggle) idleToggle.addEventListener('change', _updateIdleTimeRangeVisibility);
 
@@ -639,35 +746,130 @@ document.addEventListener('DOMContentLoaded', () => {
 // ===== 动态列表 =====
 
 /**
- * 在 Cron 列表中添加一行
- * @param {string} value - 初始 cron 表达式值
+ * 在触发时间列表中添加一行（时间选择器模式）
+ * @param {string} value - cron 表达式，如 "29 10 * * *"；空串则默认 10:00
  */
 function addCronRow(value) {
   const list = document.getElementById('cron-list');
   const row = document.createElement('div');
-  row.className = 'list-row';
+  row.className = 'list-row cron-row';
+
+  // 解析 cron → {hour, minute}，失败则给默认值
+  const time = cronToTime(value);
+
+  // 生成小时选项 0~23
+  let hourOpts = '';
+  for (let h = 0; h <= 23; h++) {
+    const sel = h === time.hour ? ' selected' : '';
+    hourOpts += `<option value="${h}"${sel}>${String(h).padStart(2,'0')}</option>`;
+  }
+  // 生成分钟选项，步进 1 分钟
+  let minOpts = '';
+  for (let m = 0; m <= 59; m++) {
+    const sel = m === time.minute ? ' selected' : '';
+    minOpts += `<option value="${m}"${sel}>${String(m).padStart(2,'0')}</option>`;
+  }
+
   row.innerHTML = `
-    <input type="text" class="cron-input" value="${escapeAttr(value)}" placeholder="0 12 * * *" />
-    <button type="button" class="btn-remove" onclick="this.parentElement.remove()">删除</button>
+    <span class="time-label">每天</span>
+    <select class="cron-hour time-select">${hourOpts}</select>
+    <span class="time-colon">:</span>
+    <select class="cron-minute time-select">${minOpts}</select>
+    <span class="time-label">触发</span>
+    <button type="button" class="btn-remove" aria-label="删除" onclick="this.parentElement.remove()">×</button>
   `;
   list.appendChild(row);
 }
 
 /**
- * 在活动 URL 列表中添加一行
+ * 在活动 URL 列表中添加一行（URL 和名称分列）
  * @param {string} url  - 活动 URL
  * @param {string} name - 活动名称
  */
 function addTargetRow(url, name) {
-  const list = document.getElementById('target-list');
-  const row = document.createElement('div');
-  row.className = 'list-row target-row';
-  row.innerHTML = `
-    <input type="text" class="target-url" value="${escapeAttr(url)}" placeholder="https://waimai.jd.com/..." style="flex:2" />
-    <input type="text" class="target-name" value="${escapeAttr(name)}" placeholder="活动名称（可选）" style="flex:1" />
-    <button type="button" class="btn-remove" onclick="this.parentElement.remove()">删除</button>
-  `;
-  list.appendChild(row);
+  const urlCol  = document.getElementById('target-url-col');
+  const nameCol = document.getElementById('target-name-col');
+  const idx = urlCol.children.length;
+
+  const urlInput = document.createElement('input');
+  urlInput.type = 'text';
+  urlInput.className = 'target-url target-input';
+  urlInput.dataset.idx = idx;
+  urlInput.value = url;
+  urlInput.placeholder = 'https://waimai.jd.com/...';
+  urlInput.style.cssText = 'width:100%; max-width:none; margin-bottom:6px;';
+
+  const nameWrap = document.createElement('div');
+  nameWrap.style.cssText = 'display:flex; align-items:center; gap:6px; margin-bottom:6px;';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.className = 'target-name target-input';
+  nameInput.dataset.idx = idx;
+  nameInput.value = name;
+  nameInput.placeholder = '备注名称（可选）';
+  nameInput.style.cssText = 'flex:1; max-width:none;';
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'btn-remove';
+  removeBtn.setAttribute('aria-label', '删除');
+  removeBtn.textContent = '×';
+  removeBtn.onclick = () => {
+    // 同步删除 URL 列和名称列对应行
+    urlInput.remove();
+    nameWrap.remove();
+  };
+
+  nameWrap.appendChild(nameInput);
+  nameWrap.appendChild(removeBtn);
+  urlCol.appendChild(urlInput);
+  nameCol.appendChild(nameWrap);
+}
+
+/**
+ * 将 cron 表达式解析为 {hour, minute}
+ * 仅支持 "MM HH * * *" 格式，失败返回默认 {hour:10, minute:0}
+ */
+function cronToTime(expr) {
+  if (!expr || !expr.trim()) return { hour: 10, minute: 0 };
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length === 5) {
+    const min  = parseInt(parts[0]);
+    const hour = parseInt(parts[1]);
+    if (!isNaN(min) && !isNaN(hour) && min >= 0 && min <= 59 && hour >= 0 && hour <= 23) {
+      return { hour, minute: min };
+    }
+  }
+  return { hour: 10, minute: 0 };
+}
+
+/**
+ * 将时间选择器的值转换为 cron 表达式
+ * @param {HTMLElement} row
+ * @returns {string}
+ */
+function timeToCron(row) {
+  const h = row.querySelector('.cron-hour').value;
+  const m = row.querySelector('.cron-minute').value;
+  return `${m} ${h} * * *`;
+}
+
+/**
+ * 将五字段 cron 表达式解析为人类可读描述（供旧数据降级展示用）
+ * @param {string} expr
+ * @returns {string}
+ */
+function parseCronDesc(expr) {
+  if (!expr || !expr.trim()) return '';
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return '格式不正确';
+  const [min, hour, dom, month, dow] = parts;
+  const isNum = s => /^\d+$/.test(s);
+  const star  = s => s === '*';
+  if (isNum(min) && isNum(hour) && star(dom) && star(month) && star(dow)) {
+    return `每天 ${String(hour).padStart(2,'0')}:${String(min).padStart(2,'0')} 触发`;
+  }
+  return '自定义计划';
 }
 
 // ===== Toast 提示 =====
