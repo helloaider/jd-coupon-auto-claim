@@ -99,8 +99,8 @@ async function loadConfig() {
     _updateIdleTimeRangeVisibility();
 
     // 闲时找券时间段
-    document.getElementById('idle-start-hour').value = data.idle_check_start_hour ?? 10;
-    document.getElementById('idle-end-hour').value   = data.idle_check_end_hour   ?? 18;
+    _setTimePicker('idle-start-hour', data.idle_check_start_hour ?? 10);
+    _setTimePicker('idle-end-hour',   data.idle_check_end_hour   ?? 18);
 
     // QQ 邮箱通知
     const emailCfg = data.notify_email;
@@ -156,8 +156,8 @@ async function saveConfig(event) {
     const idle_check_enabled = document.getElementById('idle-check-toggle').checked;
 
     // 闲时找券时间段
-    const idle_check_start_hour = parseInt(document.getElementById('idle-start-hour').value) || 10;
-    const idle_check_end_hour   = parseInt(document.getElementById('idle-end-hour').value)   || 18;
+    const idle_check_start_hour = parseInt(document.getElementById('idle-start-hour').dataset.value) || 10;
+    const idle_check_end_hour   = parseInt(document.getElementById('idle-end-hour').dataset.value)   || 18;
 
     // QQ 邮箱通知
     const emailEnabled = document.getElementById('email-notify-toggle').checked;
@@ -724,16 +724,12 @@ function _updateEmailNotifyVisibility() {
 
 // 绑定开关变化事件（在 DOMContentLoaded 后执行）
 document.addEventListener('DOMContentLoaded', () => {
-  // 初始化巡检时间段小时选择器
+  // 初始化巡检时间段自定义时间选择器
   ['idle-start-hour', 'idle-end-hour'].forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    for (let h = 0; h <= 23; h++) {
-      const opt = document.createElement('option');
-      opt.value = h;
-      opt.textContent = String(h).padStart(2, '0');
-      sel.appendChild(opt);
-    }
+    const picker = document.getElementById(id);
+    if (!picker) return;
+    _fillTimePicker(picker, 0, 23);
+    _bindTimePicker(picker);
   });
 
   const idleToggle = document.getElementById('idle-check-toggle');
@@ -746,7 +742,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ===== 动态列表 =====
 
 /**
- * 在触发时间列表中添加一行（时间选择器模式）
+ * 在触发时间列表中添加一行（自定义时间选择器）
  * @param {string} value - cron 表达式，如 "29 10 * * *"；空串则默认 10:00
  */
 function addCronRow(value) {
@@ -754,31 +750,104 @@ function addCronRow(value) {
   const row = document.createElement('div');
   row.className = 'list-row cron-row';
 
-  // 解析 cron → {hour, minute}，失败则给默认值
   const time = cronToTime(value);
-
-  // 生成小时选项 0~23
-  let hourOpts = '';
-  for (let h = 0; h <= 23; h++) {
-    const sel = h === time.hour ? ' selected' : '';
-    hourOpts += `<option value="${h}"${sel}>${String(h).padStart(2,'0')}</option>`;
-  }
-  // 生成分钟选项，步进 1 分钟
-  let minOpts = '';
-  for (let m = 0; m <= 59; m++) {
-    const sel = m === time.minute ? ' selected' : '';
-    minOpts += `<option value="${m}"${sel}>${String(m).padStart(2,'0')}</option>`;
-  }
 
   row.innerHTML = `
     <span class="time-label">每天</span>
-    <select class="cron-hour time-select">${hourOpts}</select>
+    <div class="time-picker cron-hour" data-value="${time.hour}">
+      <div class="time-picker-val">
+        <span class="tp-num">${String(time.hour).padStart(2,'0')}</span>
+        <span class="tp-arrow">▾</span>
+      </div>
+      <div class="time-picker-dropdown"></div>
+    </div>
     <span class="time-colon">:</span>
-    <select class="cron-minute time-select">${minOpts}</select>
+    <div class="time-picker cron-minute" data-value="${time.minute}">
+      <div class="time-picker-val">
+        <span class="tp-num">${String(time.minute).padStart(2,'0')}</span>
+        <span class="tp-arrow">▾</span>
+      </div>
+      <div class="time-picker-dropdown"></div>
+    </div>
     <span class="time-label">触发</span>
     <button type="button" class="btn-remove" aria-label="删除" onclick="this.parentElement.remove()">×</button>
   `;
   list.appendChild(row);
+
+  // 填充下拉选项
+  const hourPicker = row.querySelector('.cron-hour');
+  const minPicker = row.querySelector('.cron-minute');
+  _fillTimePicker(hourPicker, 0, 23);
+  _fillTimePicker(minPicker, 0, 59);
+  _bindTimePicker(hourPicker);
+  _bindTimePicker(minPicker);
+}
+
+/**
+ * 填充时间选择器下拉选项
+ */
+function _fillTimePicker(picker, min, max) {
+  const dropdown = picker.querySelector('.time-picker-dropdown');
+  const currentVal = parseInt(picker.dataset.value);
+  for (let i = min; i <= max; i++) {
+    const opt = document.createElement('div');
+    opt.className = 'time-picker-option';
+    if (i === currentVal) opt.classList.add('selected');
+    opt.textContent = String(i).padStart(2, '0');
+    opt.dataset.value = i;
+    dropdown.appendChild(opt);
+  }
+}
+
+/**
+ * 绑定时间选择器交互逻辑
+ */
+function _bindTimePicker(picker) {
+  const valEl = picker.querySelector('.time-picker-val');
+  const dropdown = picker.querySelector('.time-picker-dropdown');
+  const numEl = picker.querySelector('.tp-num');
+
+  // 点击显示/隐藏下拉
+  valEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // 关闭其他打开的下拉
+    document.querySelectorAll('.time-picker-dropdown.open').forEach(d => {
+      if (d !== dropdown) d.classList.remove('open');
+    });
+    dropdown.classList.toggle('open');
+  });
+
+  // 点击选项
+  dropdown.addEventListener('click', (e) => {
+    if (e.target.classList.contains('time-picker-option')) {
+      const val = parseInt(e.target.dataset.value);
+      picker.dataset.value = val;
+      numEl.textContent = String(val).padStart(2, '0');
+      dropdown.querySelectorAll('.time-picker-option').forEach(o => o.classList.remove('selected'));
+      e.target.classList.add('selected');
+      dropdown.classList.remove('open');
+    }
+  });
+}
+
+// 全局点击关闭所有下拉
+document.addEventListener('click', () => {
+  document.querySelectorAll('.time-picker-dropdown.open').forEach(d => d.classList.remove('open'));
+});
+
+/**
+ * 通过 id 设置自定义时间选择器的值
+ */
+function _setTimePicker(id, val) {
+  const picker = document.getElementById(id);
+  if (!picker) return;
+  const v = parseInt(val);
+  picker.dataset.value = v;
+  const numEl = picker.querySelector('.tp-num');
+  if (numEl) numEl.textContent = String(v).padStart(2, '0');
+  picker.querySelectorAll('.time-picker-option').forEach(o => {
+    o.classList.toggle('selected', parseInt(o.dataset.value) === v);
+  });
 }
 
 /**
@@ -849,8 +918,8 @@ function cronToTime(expr) {
  * @returns {string}
  */
 function timeToCron(row) {
-  const h = row.querySelector('.cron-hour').value;
-  const m = row.querySelector('.cron-minute').value;
+  const h = row.querySelector('.cron-hour').dataset.value;
+  const m = row.querySelector('.cron-minute').dataset.value;
   return `${m} ${h} * * *`;
 }
 

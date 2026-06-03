@@ -157,10 +157,10 @@
             <div class="form-group" style="margin-bottom:0;">
               <label class="toggle-label">
                 <span>弹出浏览器窗口</span>
-                <label class="toggle-switch">
+                <span class="toggle-switch">
                   <input type="checkbox" id="headless-toggle" />
                   <span class="toggle-slider"></span>
-                </label>
+                </span>
               </label>
               <small class="hint">开启：抢券时弹出浏览器窗口（可视化）；关闭：后台静默运行</small>
             </div>
@@ -175,7 +175,7 @@
                 placeholder="300"
                 style="width:100%"
               />
-              <small class="hint">每次页面加载后额外等待的毫秒数，建议 200~2000，设置过小容易触发风控</small>
+              <small class="hint">每次页面加载后额外等待的毫秒数，建议 200~2000</small>
             </div>
 
             <div class="form-group" style="margin-bottom:0;">
@@ -193,14 +193,15 @@
           </div>
 
           <!-- 板块三：闲时找券 -->
+          <hr class="section-divider" />
           <div class="config-block-header">闲时找券</div>
           <div class="form-group">
             <label class="toggle-label">
               <span>启用闲时找券</span>
-              <label class="toggle-switch">
+              <span class="toggle-switch">
                 <input type="checkbox" id="idle-check-toggle" />
                 <span class="toggle-slider"></span>
-              </label>
+              </span>
             </label>
             <small class="hint">开启后，在非定点抢券时段内每隔约 5 分钟自动刷新一次页面，捡漏临时出现的可领取优惠券。建议在官方定点券未按时发放时才开启。</small>
           </div>
@@ -208,10 +209,16 @@
           <div class="form-group" id="idle-time-range-group">
             <label>巡检时间段</label>
             <div style="display:flex; align-items:center; gap:6px;">
-              <select id="idle-start-hour" class="idle-hour-select"></select>
+              <div class="time-picker idle-hour-picker" id="idle-start-hour" data-value="10">
+                <div class="time-picker-val"><span class="tp-num">10</span><span class="tp-arrow">▾</span></div>
+                <div class="time-picker-dropdown"></div>
+              </div>
               <span class="idle-min-fixed">:01</span>
               <span style="color:#aaa; font-size:13px;">到</span>
-              <select id="idle-end-hour" class="idle-hour-select"></select>
+              <div class="time-picker idle-hour-picker" id="idle-end-hour" data-value="18">
+                <div class="time-picker-val"><span class="tp-num">18</span><span class="tp-arrow">▾</span></div>
+                <div class="time-picker-dropdown"></div>
+              </div>
               <span class="idle-min-fixed">:56</span>
             </div>
             <small class="hint">仅在此时间段内巡检，默认 10:01 到 18:56</small>
@@ -220,15 +227,15 @@
           <hr class="section-divider" />
 
           <!-- 板块四：邮件通知 -->
-          <div class="config-block-header">QQ 邮箱通知</div>
+          <div class="config-block-header">QQ邮箱通知</div>
           <!-- 邮件通知 -->
           <div class="form-group">
             <label class="toggle-label">
               <span>启用邮箱通知</span>
-              <label class="toggle-switch">
+              <span class="toggle-switch">
                 <input type="checkbox" id="email-notify-toggle" />
                 <span class="toggle-slider"></span>
-              </label>
+              </span>
             </label>
             <small class="hint">开启后每次抢券任务完成时发送结果邮件</small>
           </div>
@@ -236,9 +243,12 @@
           <div id="email-notify-group" style="display:none;">
             <div class="config-two-col" style="display:flex; gap:32px; margin-bottom:0; align-items:flex-start;">
               <div class="form-group" style="flex:1; margin-bottom:0;">
-                <label for="email-qq">QQ 号</label>
-                <input type="text" id="email-qq" placeholder="如：123456789" style="width:100%" />
-                <small class="hint">发件邮箱为该 QQ 号对应的邮箱</small>
+                <label for="email-qq">QQ邮箱</label>
+                <div style="display:flex; align-items:stretch;">
+                  <input type="text" id="email-qq" placeholder="如：123456789" style="flex:1; border-radius:4px 0 0 4px; border-right:none;" />
+                  <span style="display:flex; align-items:center; padding:0 10px; background:#f5f5f5; border:1px solid #d9d9d9; border-radius:0 4px 4px 0; font-size:13px; color:#888; white-space:nowrap;">@qq.com</span>
+                </div>
+                <small class="hint">将使用该邮箱向收件人发送提醒邮件</small>
               </div>
               <div class="form-group" style="flex:1; margin-bottom:0;">
                 <label for="email-auth-code">授权码</label>

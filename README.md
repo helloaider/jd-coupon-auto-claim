@@ -91,7 +91,7 @@ python main.py
 
 1. 主进程写入 `data/.stop_worker` 标志文件
 2. worker 主循环检测到后删除文件、关闭浏览器（先跳 `about:blank` 避免崩溃恢复弹窗）并退出
-3. 主进程等待最多 10 秒，超时则强制 kill
+3. 主进程等待最多 15 秒，超时则强制 kill
 
 **测试效果**
 
@@ -131,7 +131,7 @@ src/
 └── web/                 # Flask Web 管理界面
 ```
 
-详细文档见 [CODE_WIKI.md](CODE_WIKI.md)。
+详细技术文档（架构、模块、技术难点）见 [CODE_WIKI.md](CODE_WIKI.md)。
 
 ## 安全说明
 

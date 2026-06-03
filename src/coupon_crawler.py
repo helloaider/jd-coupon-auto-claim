@@ -480,8 +480,11 @@ class CouponCrawler:
                             if i < 2:
                                 page.wait_for_timeout(_random.randint(200, 500))
                         clicked = True
-                        risk_control_count = 0  # 有可抢按钮，重置风控计数
+                        risk_control_count = 0
                         found_action = True
+                        # 点击后等待 800ms 再进入下一轮 reload，
+                        # 给服务端处理时间，减少紧跟其后的接口超时 warning
+                        page.wait_for_timeout(800)
                         break
 
                     if text in ("销售火爆，请稍后再试",):

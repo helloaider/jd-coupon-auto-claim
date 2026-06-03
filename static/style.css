@@ -113,6 +113,12 @@ body {
   color: #555;
 }
 
+/* toggle-label 需要横排，覆盖上方 block */
+.form-group label.toggle-label {
+  display: flex;
+  align-items: center;
+}
+
 .form-group input[type="text"],
 .form-group input[type="password"],
 .form-group input[type="number"],
@@ -215,11 +221,12 @@ body {
 .cron-row {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   border: 1px solid #d9d9d9;
   border-radius: 6px;
-  padding: 2px 8px;
+  padding: 0 6px 0 6px;
   background: #fff;
+  height: 30px;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
@@ -228,25 +235,115 @@ body {
   box-shadow: 0 0 0 2px rgba(64,150,255,0.1);
 }
 
+/* 自定义时间选择器（替代原生 select） */
+.time-picker {
+  position: relative;
+  display: inline-block;
+}
+
+.time-picker-val {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 22px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+  cursor: pointer;
+  border-radius: 4px;
+  border: 1px solid #d9d9d9;
+  background: #fff;
+  user-select: none;
+  gap: 2px;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.time-picker-val:hover {
+  border-color: #4096ff;
+  background: #f0f7ff;
+  color: #1677ff;
+}
+
+.time-picker-val .tp-arrow {
+  font-size: 9px;
+  color: #aaa;
+  line-height: 1;
+}
+
+.time-picker-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  z-index: 9999;
+  max-height: 200px;
+  overflow-y: auto;
+  min-width: 52px;
+  padding: 4px 0;
+}
+
+.time-picker-dropdown.open {
+  display: block;
+}
+
+.time-picker-option {
+  padding: 4px 12px;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.time-picker-option:hover {
+  background: #f0f7ff;
+  color: #1677ff;
+}
+
+.time-picker-option.selected {
+  background: #e6f4ff;
+  color: #1677ff;
+  font-weight: 600;
+}
+
+/* 旧 select 和 time-input 样式保留（兼容） */
 .time-select {
+  display: none;
+}
+
+/* number input 替代 select，高度完全可控 */
+.time-input {
+  width: 36px;
   padding: 0 2px;
   border: none;
   border-radius: 3px;
   font-size: 13px;
   font-weight: 500;
-  color: #555;
+  color: #333;
   background: transparent;
-  cursor: pointer;
   outline: none;
-  width: 42px;
   text-align: center;
-  -webkit-appearance: none;
-  appearance: none;
-  vertical-align: middle;
+  line-height: 1;
+  height: 22px;
+  -moz-appearance: textfield;
 }
 
-.time-select:focus {
+.time-input::-webkit-outer-spin-button,
+.time-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.time-input:focus {
   background: #f0f7ff;
+  border-radius: 3px;
+}
   border-radius: 3px;
 }
 
@@ -646,13 +743,12 @@ body {
 .toggle-label {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   cursor: default;
   font-weight: 500;
   color: #555;
-  margin-bottom: 6px;
+  margin-bottom: 10px;
   width: fit-content;
-  line-height: 1;
 }
 
 .toggle-switch {

@@ -1,807 +1,987 @@
 # 京东外卖定时优惠券抢券助手 — Code Wiki
 
-## 一、项目概述
+> 版本：v1.0.31 | 最后更新：2026-06-03
 
-**项目名称**：京东外卖定时优惠券抢券助手  
-**版本**：v1.0.17  
-**项目定位**：一个基于 Playwright 浏览器自动化的桌面工具，用于在京东外卖（hour.jd.com）平台定时自动抢领优惠券。  
-**核心能力**：
-
-- 按 cron 表达式定时触发领券任务
-- 使用 Playwright 控制 Edge 浏览器模拟真实用户操作
-- Cookie 加密存储，支持浏览器中扫码自动续期
-- 内置 Web 管理界面（Flask），可通过浏览器远程管理
-- 支持系统托盘图标，后台静默运行
-- 支持历史领券记录查询
+本文档是项目的完整技术参考，涵盖架构、模块实现、技术难点和关键设计决策，供后续复盘和维护使用。
 
 ---
 
-## 二、项目目录结构
+## 目录
+
+1. [项目概述](#一项目概述)
+2. [目录结构](#二目录结构)
+3. [整体架构](#三整体架构)
+4. [核心模块详解](#四核心模块详解)
+5. [前端实现细节](#五前端实现细节)
+6. [配置系统](#六配置系统)
+7. [安全设计](#七安全设计)
+8. [打包部署](#八打包部署)
+9. [依赖清单](#九依赖清单)
+10. [技术难点与关键实现](#十技术难点与关键实现)
+11. [版本历史](#十一版本历史)
+
+---
+
+## 一、项目概述
+
+**项目定位**：运行于 Windows 本地的 Python 桌面工具，通过 Playwright 浏览器自动化在京东外卖（hour.jd.com）平台定时自动抢领优惠券。
+
+**核心能力**：
+
+- 按 cron 表达式定时触发，精确到分钟，在开抢前完成页面预热
+- Playwright 控制 Microsoft Edge，模拟移动端真实用户操作，内置反检测
+- Cookie 加密存储（Fernet），首次扫码登录后长期有效，自动续期
+- 内置 Flask Web 管理界面，在线配置、启停任务、查看日志与结果
+- 系统托盘图标（pystray），后台静默运行，无终端窗口
+- 闲时找券：非定点时段按固定节拍巡检，捡漏临时放出的券
+- QQ 邮箱通知：每次任务完成后自动发送结果邮件
+
+**技术栈一览**：
+
+| 层次 | 技术 |
+|------|------|
+| 浏览器自动化 | Playwright (sync API) + Microsoft Edge |
+| Web 框架 | Flask 3 + Waitress WSGI |
+| 配置校验 | Pydantic v2 + PyYAML |
+| 凭证加密 | cryptography.fernet (AES-128-CBC + HMAC) |
+| 定时调度 | 自定义 while 循环（worker），APScheduler 仅用于 cron 校验 |
+| 系统托盘 | pystray + Pillow |
+| 邮件通知 | smtplib SMTP_SSL (QQ 邮箱 smtp.qq.com:465) |
+| 打包 | PyInstaller (单 exe，console=False) |
+| 前端 | 原生 HTML/CSS/JS，无框架依赖 |
+
+
+---
+
+## 二、目录结构
 
 ```
 jd-coupon-auto-claim/
-├── main.py                  # 主入口（系统托盘 + Web 服务）
-├── web_app.py               # Web 管理界面独立入口
-├── worker.py                # 抢券工作进程入口
-├── login.py                 # 京东登录工具（获取 Cookie）
-├── config.yaml              # 配置文件（YAML 格式）
+├── main.py                  # 主入口：系统托盘 + Flask Web 服务
+├── worker.py                # 抢券工作进程（由主进程 subprocess 启动）
+├── login.py                 # 独立登录工具（打开浏览器扫码，保存 Cookie）
+├── web_app.py               # Web 独立入口（无托盘，WEB_PORT/CONFIG_PATH 环境变量）
+├── config.yaml              # 用户配置文件
+├── config.example.yaml      # 配置示例
 ├── build.spec               # PyInstaller 打包配置
-├── requirements.txt         # Python 依赖清单
-├── .gitignore               # Git 忽略规则
-├── 启动.bat                 # Windows 启动脚本
-├── 直接抢券.bat             # Windows 快捷启动（带浏览器界面）
-├── 打包.bat                 # Windows 打包脚本（自动递增版本号）
+├── bump_version.py          # 版本号自动递增脚本
+├── clean_dist_config.py     # 打包后清理敏感文件脚本
+├── make_zip.py              # 打包 zip 发布脚本
+├── requirements.txt         # Python 依赖
 │
-├── src/                     # 核心业务逻辑包
-│   ├── __init__.py
-│   ├── version.py           # 版本号管理
-│   ├── models.py            # Pydantic 数据模型 + 运行时数据类
-│   ├── config_loader.py     # 配置加载与校验
-│   ├── auth_manager.py      # 登录凭证管理（加密存储/读取）
-│   ├── coupon_crawler.py    # 领券执行器（Playwright 浏览器自动化）
-│   ├── task_runner.py       # 任务编排器
-│   ├── scheduler.py         # 定时调度器（APScheduler 封装）
-│   ├── logger_setup.py      # 日志初始化
-│   │
-│   └── web/                 # Web 管理界面包
-│       ├── __init__.py
-│       ├── app.py           # Flask 应用工厂
-│       ├── auth_middleware.py  # Basic Auth 中间件
-│       ├── config_api.py    # 配置管理 API
-│       ├── scheduler_controller.py  # 调度器控制器（子进程管理）
-│       ├── log_reader.py    # 日志读取 API
-│       ├── result_api.py    # 领券结果 API
-│       └── result_writer.py # 领券结果写入器
+├── src/                     # 核心业务逻辑
+│   ├── version.py           # 版本号（当前 1.0.31）
+│   ├── models.py            # Pydantic 配置模型 + 运行时数据类
+│   ├── config_loader.py     # 配置加载与 Pydantic 校验
+│   ├── auth_manager.py      # 登录凭证加密管理
+│   ├── coupon_crawler.py    # Playwright 浏览器自动化（抢券 + 闲时巡检）
+│   ├── task_runner.py       # 单次任务编排器（7 步流程）
+│   ├── scheduler.py         # APScheduler 封装（仅用于 cron 校验）
+│   ├── logger_setup.py      # 日志初始化（RotatingFileHandler）
+│   ├── email_notifier.py    # QQ 邮箱通知
+│   └── web/
+│       ├── app.py               # Flask 应用工厂
+│       ├── auth_middleware.py   # Basic Auth 中间件
+│       ├── config_api.py        # GET/POST /api/config
+│       ├── scheduler_controller.py  # 子进程管理 + 调度控制 API
+│       ├── log_reader.py        # GET/DELETE /api/logs
+│       ├── result_api.py        # GET /api/result
+│       └── result_writer.py     # 领券结果写入器（保留最近 50 条历史）
 │
-├── static/                  # 前端静态文件
-│   ├── index.html           # 管理界面 HTML
-│   ├── style.css            # 样式表
-│   ├── app.js               # 前端 JavaScript 逻辑
-│   ├── logo.ico             # 应用图标
-│   ├── logo.png
-│   └── logo.jpg
+├── static/                  # Web 前端静态文件
+│   ├── index.html           # 管理界面 HTML（双 Tab）
+│   ├── app.js               # 前端逻辑（纯原生 JS）
+│   ├── style.css            # 样式（无框架）
+│   └── logo.ico/png/jpg     # 应用图标
 │
-├── data/                    # 运行时数据目录
+├── data/                    # 运行时数据（.gitignore 排除敏感文件）
 │   ├── credentials.enc      # 加密存储的 Cookie
 │   ├── fernet.key           # Fernet 加密密钥
-│   └── last_result.json     # 最近领券结果
+│   ├── last_result.json     # 最近领券结果（含历史记录）
+│   └── .stop_worker         # 优雅退出标志文件（临时，由主进程创建）
 │
-├── logs/                    # 日志目录
-│   └── app.log
-│
-└── dist/                    # 打包输出目录
-    ├── config.yaml
-    ├── 使用说明.txt
-    └── 京东外卖定时优惠券抢券助手_v1.0.17.exe
+└── logs/
+    └── app.log              # 运行日志（自动滚动，默认 10MB × 7 份）
 ```
+
 
 ---
 
 ## 三、整体架构
 
-### 3.1 架构分层
+### 3.1 双进程模型
+
+项目采用严格的双进程架构，这是整个设计中最核心的决策：
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                      用户交互层                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │ 系统托盘图标  │  │ Web 管理界面  │  │ 命令行/批处理  │  │
-│  │ (pystray)    │  │ (Flask + JS) │  │ (.bat脚本)    │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │
-├─────────┼─────────────────┼─────────────────┼───────────┤
-│         └────────┬────────┘                 │           │
-│                  ▼                          │           │
-│  ┌──────────────────────────────┐           │           │
-│  │       Web API 层             │           │           │
-│  │  ┌────────┐┌───────┐┌─────┐ │           │           │
-│  │  │配置API ││调度API││日志 │ │           │           │
-│  │  │结果API ││版本API││API  │ │           │           │
-│  │  └───┬────┘└──┬────┘└──┬──┘ │           │           │
-│  └──────┼────────┼────────┼────┘           │           │
-├─────────┼────────┼────────┼────────────────┼───────────┤
-│         │        │        │                │           │
-│         ▼        ▼        ▼                ▼           │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │                 业务逻辑层                         │  │
-│  │  ┌──────────┐ ┌─────────────┐ ┌──────────────┐  │  │
-│  │  │ 配置加载  │ │ 凭证管理    │ │ 任务编排器   │  │  │
-│  │  │ConfigLoad│ │CredentialMgr│ │TaskRunner    │  │  │
-│  │  └────┬─────┘ └──────┬──────┘ └──────┬───────┘  │  │
-│  │       │              │               │          │  │
-│  │  ┌────▼──────────────▼───────────────▼───────┐  │  │
-│  │  │          领券执行器 (CouponCrawler)        │  │  │
-│  │  │         Playwright 浏览器自动化            │  │  │
-│  │  └───────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────┘  │
-├───────────────────────────────────────────────────────┤
-│                     基础设施层                          │
-│  ┌──────────┐ ┌────────┐ ┌──────────┐  │
-│  │ 日志系统  │ │ 数据模型│ │ 定时调度 │  │
-│  │LoggerSet.│ │ Models │ │Scheduler │  │
-│  └──────────┘ └────────┘ └──────────┘  │
-└───────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│  主进程（main.py）                            │
+│                                             │
+│  主线程：pystray 系统托盘（阻塞）              │
+│  后台线程：Flask + Waitress（127.0.0.1:5000） │
+│    └── SchedulerController                  │
+│         └── subprocess.Popen ──────────────┐│
+└────────────────────────────────────────────┼┘
+                                             │
+┌────────────────────────────────────────────▼┐
+│  Worker 子进程（worker.py）                   │
+│                                             │
+│  主线程：while True + sleep(1) 调度循环       │
+│    ├── Playwright Edge 浏览器（全程常驻）      │
+│    ├── TaskRunner → CredentialManager       │
+│    │                └── CouponCrawler       │
+│    └── 闲时巡检逻辑                          │
+└─────────────────────────────────────────────┘
 ```
 
-### 3.2 进程模型
+**为什么要双进程？**  
+Playwright 的 `sync_api` 基于 greenlet，必须在同一线程内操作 browser/page 对象，不能跨线程调用。Flask 的 Waitress 是多线程 WSGI，如果把 Playwright 放在主进程的线程池里运行，会立即触发 `greenlet.error: cannot switch to a different thread`。双进程彻底隔离，worker 的主线程全权负责 Playwright。
 
-项目采用**双进程架构**：
+**进程间通信：标志文件模式**  
+不使用 socket/pipe/queue，主进程通过创建 `data/.stop_worker` 文件通知 worker 退出：
+- 写入：`SchedulerController.stop()` 或 `stop_immediately()` 创建该文件
+- 检测：worker 主循环每秒 `os.path.exists()` 轮询
+- 清理：worker 检测到后删除文件并退出；`stop()` 的 finally 块兜底删除
 
-| 进程 | 职责 | 关键技术 |
-|------|------|----------|
-| **主进程** (`main.py`) | 系统托盘 + Flask Web 服务 | pystray, waitress |
-| **工作进程** (`worker.py`) | Playwright 浏览器控制 + 定时调度循环 | Playwright, subprocess |
+优点：无需 IPC 通道，打包成 exe 后完全一样有效。
 
-**通信方式**：主进程通过 `subprocess.Popen` 启动工作进程，通过 `.stop_worker` 标志文件和子进程 stdout 管道通信。
-
-### 3.3 完整运行流程
+### 3.2 完整运行流程
 
 **启动阶段**
 
-1. 双击 exe，`main.py` 主进程启动
-2. 后台线程启动 Flask + Waitress Web 服务（端口 5000）
-3. 系统托盘图标出现，自动打开浏览器访问管理界面
+1. 双击 exe → `main.py` 启动
+2. 后台线程启动 Flask + Waitress（端口 5000）
+3. 主线程启动 pystray 系统托盘（阻塞），自动打开浏览器访问管理界面
 
-**启动任务**
+**启动任务阶段**
 
-1. 用户点「启动任务」
-2. `SchedulerController` 通过 `subprocess.Popen` 启动 `worker.py` 子进程
-3. worker 加载配置、初始化 `AuthManager`、`CouponCrawler`
-4. worker 自动查找 Edge 安装路径（兼容系统级和用户级安装），启动浏览器
-5. 注入反检测脚本（覆盖 `navigator.webdriver`）和模拟移动端 User-Agent
-6. 注入登录凭证，打开活动页面预热，等待 `.coupon-button-section` 元素出现
-7. 若检测到跳转登录页，等用户扫码（最多 5 分钟），登录后自动提取并加密保存凭证
-8. 浏览器就绪，worker 进入主循环每秒检测 cron 触发时间
+1. 用户点「启动任务」→ POST `/api/scheduler/start`
+2. `SchedulerController.start()` → `subprocess.Popen` 启动 worker
+3. worker 加载配置，初始化 `CredentialManager`、`CouponCrawler`
+4. 三道关卡检查 stop_flag（见难点 10.3），通过后调用 `_ensure_browser()`
+5. Edge 启动，移动端上下文，注入反检测脚本 + Cookie
+6. 若检测到登录页，等用户扫码（最多 5 分钟），自动提取并加密保存凭证
+7. 浏览器就绪，进入 `while True` 主循环，每秒检测触发时间
 
-**到点抢券**（以 `29 10 * * *` 触发，T = 10:29 为例）
+**抢券阶段**（以 `29 10 * * *` 为例，T = 10:29）
 
 | 时间 | 动作 |
 |------|------|
-| T:00 ~ T:30 | 等待阶段，每 5 秒检测一次 |
-| T:30 | `page.goto()` 打开活动页面 |
-| T:49~51（随机，仅随机一次） | `page.reload()` 预热刷新，让数据提前加载 |
+| T:00 ~ T:30 | 等待，每 5s 一次 |
+| T:30 | `page.goto()` 打开活动页面（预备） |
+| T:49~51（随机一次） | `page.reload()` 预热刷新 |
 | T:55 | 开始正式轮询 |
-| 每轮循环 | `page.reload(wait_until="commit")` → 监听 `hours_home_pub` 接口响应（超时 1500ms） → 等待 `grab_interval_ms` |
-| 每轮检测 | 检测登录跳转；检测「销售火爆」风控（连续 8 次才判定可能为风控暂时终止）；切换「正在抢券中」tab；扫描按钮文字 |
-| 发现「立即抢券」/「立即领取」 | 随机间隔（200~500ms）连点 3 次 |
-| T+0:06 起 | 「已领取」→ 成功；「已抢光/已售罄/库存不足」→ 失败 |
-| 每轮耗时不足 1.3~1.6s | 补足等待（随机） |
-| T+1:20 | 停止轮询，结果写入 `data/last_result.json` |
+| 每轮 | `page.reload(wait_until="commit")` + 监听 `hours_home_pub` 接口（超时 1500ms） |
+| 发现按钮 | 随机间隔（200~500ms）连点 3 次 |
+| T+1:06 起 | 检测「已领取」→ 成功；「已抢光/库存不足」→ 失败 |
+| T+1:25 | 停止轮询，写入结果文件，发邮件通知 |
 
-**停止任务**
+**停止任务阶段**
 
-1. 用户点「停止任务」或托盘「退出」
-2. 主进程写入 `data/.stop_worker` 标志文件
-3. worker 主循环每秒检测该文件，检测到后删除文件并跳出循环
-4. `crawler.close()`：先 `goto("about:blank")` 再关闭 context 和 browser（先跳空白页避免 Edge 崩溃恢复弹窗）
-5. 主进程等待 worker 退出（最多 10 秒），超时则强制 kill
-6. 主进程 `os._exit(0)` 终止
+1. 用户点「停止任务」→ `SchedulerController.stop()` 写入 stop_flag
+2. worker 主循环检测到，标记 `crawler._stopped = True`，删除标志文件
+3. `crawler.close()`：先 `goto("about:blank")` 再关闭 context/browser/playwright
+4. 主进程等待最多 15 秒，超时强制 kill
 
-**测试效果**
-
-点「测试效果」，启动临时 worker 子进程（`--once` 参数），`force=True` 跳过时间窗口，最多刷新 20 次后自动退出，不影响正在运行的调度器。
 
 ---
 
 ## 四、核心模块详解
 
-### 4.1 入口模块
-
-#### 4.1.1 `main.py` — 主入口
+### 4.1 main.py — 主入口
 
 | 函数 | 职责 |
 |------|------|
-| `main()` | 解析命令行参数，分发到 worker 模式或托盤模式 |
-| `_start_web_server()` | 后台线程启动 Flask Web 服务（waitress） |
-| `_run_tray()` | 启动 pystray 系统托盘图标，含"打开管理界面"和"退出"菜单 |
+| `main()` | 解析 CLI 参数，分发到 worker 模式或托盘模式 |
+| `_start_web_server()` | 后台线程启动 Flask + Waitress，监听 127.0.0.1:port |
+| `_run_tray()` | 启动 pystray 托盘，含「打开管理界面」和「退出」菜单 |
 
-**启动模式**：
+**托盘图标生成逻辑**：优先读 `static/logo.png`，找不到则用 Pillow 绘制红色圆形 + "JD" 文字作为兜底。
 
-```bash
-python main.py                          # 默认：系统托盘 + Web 界面
-python main.py --port 8080              # 指定 Web 端口
-python main.py --config my_config.yaml  # 指定配置文件
-python main.py --worker ...             # 内部用，由 Web 界面启动工作进程
-```
+**退出逻辑**：托盘「退出」调用 `controller.stop_immediately()`（写 flag + 等 2s + 强杀），然后 `os._exit(0)` 强制终止，避免 Waitress/pystray 的残留线程造成僵尸进程。
 
-#### 4.1.2 `worker.py` — 工作进程
+**打包兼容**：`_get_worker_cmd()` 通过 `getattr(sys, "frozen", False)` 判断是否为打包环境，打包后用 `sys.executable --worker` 让 exe 以 worker 模式再次启动自己。
 
-工作进程是独立子进程，核心逻辑在主线程中轮询。
+---
 
-| 函数 | 职责 |
-|------|------|
-| `_parse_cron_minutes()` | 从 cron 表达式提取分钟数 |
-| `_should_trigger()` | 检查当前时间是否应触发任务（按分钟匹配，防重复） |
-| `main()` | 工作进程主逻辑：加载配置 → 初始化 CredentialManager → 启动浏览器 → 轮询调度 |
+### 4.2 worker.py — 抢券工作进程
 
-**执行模式**：
+**调度实现**：不使用 APScheduler，用最简单的 `while True + time.sleep(1)` 主循环，每秒调用 `_should_trigger()` 比较当前时间与 cron 中的分钟/小时。同一分钟内用 `trigger_key`（`YYYY-MM-DD HH:MM` 字符串）防重复触发。
 
-- `--once`：立即执行一次后退出（测试用）
-- `--run-now`：立即执行一次后继续等待调度
+**三道关卡防竞态**（浏览器启动前）：
+1. 初始化完成后、`_ensure_browser()` 前检查 stop_flag
+2. 浏览器启动完成后再次检查 stop_flag
+3. 主循环每秒检查 stop_flag
+
+**闲时巡检调度**（见难点 10.5）：
+- 固定节拍：每小时的 `:01/:06/:11/.../56`（每 5 分钟一次）
+- 每个节拍加 `±60s` 随机偏移，防固定频率被识别
+- 处于定点抢券忙时窗口（触发分 `:25` ~ 开抢分 `:30`）时自动跳过
+
+**运行模式**：
 - 默认：等待 cron 时间点触发
-
-#### 4.1.3 `login.py` — 登录工具
-
-独立的登录辅助脚本，打开 Edge 浏览器让用户手动扫码登录京东，自动提取 Cookie 并保存到 `config.yaml`。
-
-#### 4.1.4 `web_app.py` — Web 独立入口
-
-独立启动 Web 管理界面（无系统托盘），通过环境变量 `WEB_PORT` 和 `CONFIG_PATH` 配置。
+- `--once`：`force=True` 执行一次后 `sys.exit(0)`
+- `--run-now`：执行一次后继续主循环
 
 ---
 
-### 4.2 数据模型层 `src/models.py`
+### 4.3 src/auth_manager.py — 凭证管理
 
-#### Pydantic 配置模型
+**加密方案**：`cryptography.fernet.Fernet`（AES-128-CBC + HMAC-SHA256），密钥和密文分两个文件存储。
 
-| 模型类 | 用途 | 关键字段 |
-|--------|------|----------|
-| `CredentialConfig` | 京东账号凭证 | `cookie: str` |
-| `CouponTargetConfig` | 优惠券活动目标 | `url: str`, `name: str` |
-| `LogConfig` | 日志配置 | `path`, `max_bytes`, `backup_count` |
-| `AppConfig` | 应用全局配置 | `credential`, `schedule`, `coupon_targets`, `log`, `request_timeout`, `jd_area`, `headless`, `grab_interval_ms` |
+| 方法 | 说明 |
+|------|------|
+| `_load_or_create_key()` | 首次运行自动生成密钥写入 `data/fernet.key` |
+| `initialize()` | config.yaml 有 cookie → 覆盖写入加密文件；config 无 cookie + 加密文件存在 → 直接使用；两者都无 → 抛 `LoginExpiredError` |
+| `get_headers()` | 从加密文件解密 Cookie，组装含 UA 的请求头，日志中不记录明文 |
+| `update_credential()` | 浏览器扫码登录后回调，覆盖写入新 Cookie |
+| `mark_invalid()` / `is_valid()` | 内存中的 `_valid` 标志，失效后拒绝 `get_headers()` |
 
-#### 运行时数据模型
-
-| 类/枚举 | 用途 | 关键字段 |
-|---------|------|----------|
-| `ClaimStatus` (Enum) | 领券状态 | `SUCCESS`, `FAILED`, `SKIPPED` |
-| `FailReason` (Enum) | 失败原因 | `ALREADY_CLAIMED`, `NOT_STARTED`, `OUT_OF_STOCK`, `LOGIN_EXPIRED`, `HTTP_ERROR`, `UNKNOWN` |
-| `CouponInfo` (dataclass) | 优惠券信息 | `coupon_id`, `name`, `denomination`, `min_spend`, `claim_url` |
-| `ClaimResult` (dataclass) | 领取结果 | `coupon_info`, `status`, `fail_reason`, `claimed_at` |
+**凭证双轨设计**：config.yaml 里的 cookie 字段仅作为"初始导入通道"，每次 `initialize()` 时若 config 有值就覆盖加密文件，然后程序运行后 cookie 始终从 `credentials.enc` 读取，Web 界面保存配置时始终写入空 cookie，不暴露凭证。
 
 ---
 
-### 4.3 配置加载层 `src/config_loader.py`
+### 4.4 src/coupon_crawler.py — 领券执行器
 
-#### `ConfigLoader` 类
-
-| 方法 | 职责 | 关键逻辑 |
-|------|------|----------|
-| `load(path)` | 加载并校验配置文件 | 自动检测 YAML/JSON 格式，Pydantic 校验 |
-| `_detect_format(path)` | 检测文件格式 | 扩展名判断：`.yaml/.yml` → yaml，`.json` → json |
-| `_validate(raw)` | 校验配置字典 | 捕获 `ValidationError` 并转换为 `ConfigValidationError` |
-
-**自定义异常**：
-
-| 异常类 | 触发条件 |
-|--------|----------|
-| `ConfigValidationError` | 配置校验失败，包含字段名和原因 |
-
----
-
-### 4.4 凭证管理层 `src/auth_manager.py`
-
-#### `CredentialManager` 类
-
-**加密方案**：使用 `cryptography.fernet.Fernet`（AES-128-CBC + HMAC）对称加密。
-
-| 方法 | 职责 | 关键逻辑 |
-|------|------|----------|
-| `_load_or_create_key()` | 加载或创建 Fernet 密钥 | 密钥文件不存在时自动生成 |
-| `_encrypt(plaintext)` | 加密字符串 | Fernet 加密 |
-| `_decrypt(ciphertext)` | 解密字节 | Fernet 解密 |
-| `initialize()` | 初始化凭证存储 | 优先使用 config.yaml 中的凭证覆盖加密存储 |
-| `get_headers()` | 返回含登录凭证的请求头 | 从加密文件解密凭证 |
-| `update_credential(session_cookie)` | 更新登录凭证 | 浏览器扫码登录后回调，覆盖加密存储 |
-| `mark_invalid()` | 标记登录失效 | 设置 `_valid = False` |
-| `is_valid()` | 检查登录有效性 | 返回 `_valid` |
-
-**自定义异常**：
-
-| 异常类 | 触发条件 |
-|--------|----------|
-| `LoginExpiredError` | 登录过期或未登录 |
-| `KeyFileNotFoundError` | Fernet 密钥文件丢失 |
-
----
-
-### 4.5 领券执行器 `src/coupon_crawler.py`
-
-#### `CouponCrawler` 类
-
-核心自动化组件，使用 Playwright 控制 Microsoft Edge 浏览器。
-
-| 方法 | 职责 | 关键逻辑 |
-|------|------|----------|
-| `set_session_cookie(session_cookie)` | 注入登录凭证 | 设置内部 `_session_cookie` 属性 |
-| `_parse_cookies()` | 解析 Cookie 字符串 | 将 `key=value;` 格式转为 Playwright cookie 对象 |
-| `_ensure_browser()` | 确保浏览器已启动 | 检测浏览器是否存活，自动重启；注入反检测脚本 |
-| `_wait_for_login_if_needed()` | 检测并等待登录 | 检测登录页域名，等待用户手动扫码，自动提取新 Cookie |
-| `_extract_cookie_from_browser()` | 从浏览器提取 Cookie | 从 Playwright context 获取所有 `.jd.com` Cookie |
-| `warmup()` | 浏览器预热 | 兼容接口，实际在 `run()` 中延迟启动 |
-| `close()` | 关闭浏览器 | 先导航到 `about:blank`，避免 Edge 崩溃恢复弹窗 |
-| `run(force)` | 执行领券流程 | 确保浏览器存活 → 调用 `_grab_coupons()` |
-| `_grab_coupons(page, force)` | 轮询刷新抢券 | **核心领券逻辑**，见下方详述 |
-| `_switch_to_ongoing_tab()` | 切换到"正在抢券中"tab | 点击抢券 tab |
-| `_check_result()` | 检查领券结果 | 根据页面文本判断成功/失败/已领取 |
-| `_close_popup()` | 关闭弹窗 | 点击关闭按钮 |
-
-**抢券策略**（`_grab_coupons` 方法）：
+#### 浏览器初始化（`_ensure_browser`）
 
 ```
-触发时间点 T（如 10:29）
-  │
-  ├── T:00 ~ T:30    等待阶段
-  ├── T:30 ~ T:55    预备阶段 ── 打开活动页面
-  │     └── T:50     预热刷新（随机 ±1s）
-  ├── T:55 ~ T+1:20  高频刷新轮询
-  │     ├── 每轮检测"立即抢券"按钮 → 连点 3 次
-  │     ├── 检测风控提示"销售火爆" → 终止
-  │     ├── 切换到"正在抢券中"tab
-  │     └── 检测"已领取"/"已抢光" → 返回结果
-  └── T+1:20         停止轮询
+候选路径（按优先级）：
+  C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+  C:\Program Files\Microsoft\Edge\Application\msedge.exe
+  %LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe  ← 用户级安装
+  回退：channel="msedge"（Playwright 自动查找）
 ```
 
-**反检测措施**：
+**上下文配置**：移动端 UA（Pixel 7 Android 13 Chrome 124）、390×844 视口、`is_mobile=True`、`has_touch=True`、`device_scale_factor=3`。
 
-- 覆盖 `navigator.webdriver` 标志
-- 设置移动端 User-Agent
-- 注入 `window.chrome` 对象
-- 设置真实浏览器请求头
-- 随机刷新间隔（1300~1600ms）
+**反检测注入**（`add_init_script`）：
+```js
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+window.chrome = { runtime: {} };
+```
 
-**自定义异常**：
+**额外请求头**：`sec-ch-ua`、`sec-ch-ua-mobile`、`sec-ch-ua-platform`、`Accept-Language`、`Referer`、`Origin`。
 
-| 异常类 | 说明 |
-|--------|------|
-| `CrawlerError` | 领券执行器基础异常 |
-| `CrawlerTimeoutError` | 操作超时异常 |
+#### 抢券核心逻辑（`_grab_coupons`）
+
+**时间窗口动态计算**：根据触发时刻的分钟数自动推算各阶段，适配任意触发时间：
+
+```python
+trigger_minute = datetime.now().minute
+open_minute    = (trigger_minute + 1) % 60
+ready_start    = trigger_minute * 60 + 30   # :30 开始预备
+preheat_time   = trigger_minute * 60 + 50   # :50 预热刷新
+refresh_start  = trigger_minute * 60 + 55   # :55 开始正式刷新
+stop_time      = open_minute    * 60 + 25   # 开抢分钟:25 结束
+```
+
+预热时间在任务开始时随机一次（`preheat_trigger = preheat_time ± random(0, 1000ms)`），整个任务过程固定，不每轮重新随机。
+
+**每轮刷新策略**：
+```python
+# reload 后监听接口，不等整页加载
+with page.expect_response(
+    lambda r: "hours_home_pub" in r.url and r.status == 200,
+    timeout=1500
+):
+    page.reload(wait_until="commit")
+# 等配置的刷新间隔
+if grab_interval_ms > 0:
+    page.wait_for_timeout(grab_interval_ms)
+```
+
+然后补足随机间隔，保证每轮总时长在 1300~1600ms，防固定频率风控。
+
+**风控检测**：「销售火爆」连续出现 8 次（`RISK_CONTROL_THRESHOLD = 8`）才判定风控终止，偶发一两次继续刷，避免误判。
+
+**按钮点击**：发现「立即抢券」/「立即领取」后，1 秒内随机间隔连点 3 次（间隔 200~500ms）。
+
+**结果判定**：只在切换到「正在抢券中」tab 后、开抢分钟 `:06` 之后才判断，避免开抢前误判。
+
+#### 闲时巡检（`idle_check`）
+
+轻量版：只 `page.reload()` 一次，监听同一接口，扫描按钮，发现可领取就连点 3 次，无按钮静默返回。不重启浏览器（`_browser is None` 时直接返回）。
+
 
 ---
 
-### 4.6 任务编排器 `src/task_runner.py`
+### 4.5 src/task_runner.py — 任务编排器
 
-#### `TaskRunner` 类
+七步编排：
 
-| 方法 | 职责 | 执行步骤 |
-|------|------|----------|
-| `run(force)` | 执行一次完整领券任务 | ① 检查凭证有效性 → ② 注入 Cookie → ③ 执行领券 → ④ 写入结果 → ⑤ 记录完成日志 |
+```
+① auth_manager.is_valid()          → 检查登录有效性
+② auth_manager.get_headers()       → 解密获取 Cookie
+③ crawler.set_session_cookie()     → 注入到 Playwright context
+④ crawler.run(force)               → 执行领券（返回 ClaimResult[]）
+⑤ result_writer.write_result()     → 原子写入 last_result.json
+⑥ email_notifier.send_result_email() → 发邮件（若已配置）
+⑦ 日志记录完成（成功/失败/已领取 数量）
+```
 
----
-
-### 4.7 定时调度器 `src/scheduler.py`
-
-#### `Scheduler` 类
-
-封装 APScheduler，支持两种运行模式。
-
-| 方法 | 职责 | 关键逻辑 |
-|------|------|----------|
-| `_register_jobs()` | 注册 cron 任务 | 遍历 schedule 列表，每个 cron 注册一个 Job |
-| `start()` | 启动调度器 | blocking 模式阻塞主线程，background 模式立即返回 |
-| `stop()` | 停止调度器 | shutdown(wait=True) |
-| `get_job_count()` | 获取任务数量 | 返回注册的 Job 数 |
-
-**配置参数**：
-
-- `misfire_grace_time`: 60s（错过任务后的宽限期）
-- `coalesce`: True（合并多次错过）
-- `max_instances`: 1（不允许并发）
+异常分层：`LoginExpiredError` → `mark_invalid()`；`CrawlerError` → 记录错误；其他异常 → `logger.exception()` 打完整堆栈。
 
 ---
 
-### 4.8 Web 层 `src/web/`
+### 4.6 src/web/ — Web 层
 
-#### 4.8.1 `app.py` — Flask 应用工厂
+#### app.py — Flask 工厂
 
-| 函数 | 职责 |
-|------|------|
-| `create_app(config_path)` | 创建 Flask 应用，注册蓝图、中间件、静态路由、版本 API |
+```python
+app.extensions["scheduler_controller"] = SchedulerController()
+```
 
-**注册的蓝图**：
+`SchedulerController` 以单例挂载到 Flask extensions，各 Blueprint 通过 `current_app.extensions["scheduler_controller"]` 获取。
 
-| 蓝图 | 路由前缀 | 功能 |
-|------|----------|------|
-| `config_bp` | `/api/config` | 配置读取/保存 |
-| `scheduler_bp` | `/api/scheduler/status`, `/api/scheduler/start`, `/api/scheduler/stop`, `/api/scheduler/run-now` | 调度器控制 |
-| `log_bp` | `/api/logs` | 日志读取/清空 |
-| `result_bp` | `/api/result` | 领券结果查询 |
-
-**静态路由**：
-
-| 路由 | 说明 |
-|------|------|
-| `GET /` | 返回 `index.html` |
-| `GET /static/<path>` | 静态文件 |
-| `GET /api/version` | 返回版本号 `{"version": "1.0.17"}` |
-
-#### 4.8.2 `auth_middleware.py` — Basic Auth 中间件
-
-| 函数 | 职责 |
-|------|------|
-| `check_auth(password, auth_header)` | 常量时间比较验证 Basic Auth（用户名任意，只校验密码） |
-| `require_auth()` | Flask before_request 钩子，校验认证，静态资源和主页放行 |
-| `init_auth(app)` | 注册认证钩子到应用 |
-
-#### 4.8.3 `config_api.py` — 配置管理 API
-
-| 辅助函数 | 职责 |
-|----------|------|
-| `validate_cron(cron)` | 校验 cron 表达式合法性 |
-| `validate_url(url)` | 校验 URL 格式（http/https） |
-| `atomic_write_yaml(path, data)` | 原子写入 YAML（先写临时文件，再 `os.replace`） |
-
-**API 端点**：
+**路由总览**：
 
 | 方法 | 路由 | 功能 |
 |------|------|------|
-| GET | `/api/config` | 读取配置（不含 credential，由 CredentialManager 独立管理） |
-| POST | `/api/config` | 保存配置（校验 cron/URL，credential.cookie 始终保持为空） |
-
-#### 4.8.4 `scheduler_controller.py` — 调度器控制器
-
-**关键设计**：工作进程在独立子进程中运行，避免 Playwright 的 greenlet 跨线程限制。
-
-| 方法 | 职责 |
-|------|------|
-| `start(config_path)` | 启动子进程运行 worker.py |
-| `stop()` | 写 `.stop_worker` 标志文件优雅停止 → 超时强杀 |
-| `run_now(config_path)` | 启动临时子进程执行一次（--once 模式） |
-| `get_status()` | 返回运行状态 `{"running": bool, ...}` |
-| `is_running()` | 检查子进程是否在运行 |
-| `_pipe_output(proc)` | 后台线程将子进程 stdout 转发到日志 |
-
-**API 端点**：
-
-| 方法 | 路由 | 功能 |
-|------|------|------|
-| GET | `/api/scheduler/status` | 获取调度器状态 |
-| POST | `/api/scheduler/start` | 启动调度器 |
-| POST | `/api/scheduler/stop` | 停止调度器 |
+| GET | `/` | 返回 index.html |
+| GET | `/static/<path>` | 静态文件 |
+| GET | `/api/version` | 版本号 |
+| GET/POST | `/api/config` | 读取/保存配置 |
+| GET | `/api/scheduler/status` | 调度器运行状态 |
+| POST | `/api/scheduler/start` | 启动 worker |
+| POST | `/api/scheduler/stop` | 停止 worker |
 | POST | `/api/scheduler/run-now` | 立即执行一次 |
-
-#### 4.8.5 `log_reader.py` — 日志读取器
-
-| 函数 | 职责 |
-|------|------|
-| `read_last_lines(path, n)` | 高效反向扫描读取日志文件最后 N 行 |
-| `clear_log(path)` | 清空日志文件 |
-
-**API 端点**：
-
-| 方法 | 路由 | 功能 |
-|------|------|------|
 | GET | `/api/logs?lines=N` | 读取最新 N 行日志 |
 | DELETE | `/api/logs` | 清空日志 |
+| GET | `/api/result` | 领券结果 + 历史 |
 
-#### 4.8.6 `result_api.py` — 领券结果 API
+#### auth_middleware.py — Basic Auth
 
-| 方法 | 路由 | 功能 |
-|------|------|------|
-| GET | `/api/result` | 读取最近领券结果及历史（支持 schema 版本兼容） |
+- 通过环境变量 `WEB_PASSWORD` 启用，未设置时放行所有请求
+- `/` 和 `/static/` 路径始终放行（防止登录页本身需要认证）
+- 使用 `hmac.compare_digest()` 常量时间比较，防时序攻击
 
-#### 4.8.7 `result_writer.py` — 结果写入器
+#### config_api.py — 配置 API
 
-| 函数 | 职责 |
-|------|------|
-| `write_result(results, task_time, path)` | 将领券结果原子写入 JSON 文件，保留最多 50 条历史 |
+**保存时的关键处理**：
+1. 用 `CronTrigger.from_crontab()` 校验每个 cron 表达式
+2. 校验每个 URL 以 `http://` 或 `https://` 开头
+3. `credential.cookie` 始终写空——凭证走 `credentials.enc`，不走 config
+4. 若前端传来的 `auth_code` 是掩码 `"••••••••"`，保留原配置里的真实授权码不覆盖
+5. `atomic_write_yaml()`：先写 `.tmp` 临时文件，再 `os.replace()` 原子替换，防写入中断损坏
 
----
+#### log_reader.py — 日志读取
 
-### 4.9 日志系统 `src/logger_setup.py`
+`read_last_lines()` 从文件末尾反向扫描（chunk 8KB），不读整个文件，适合大日志文件的高频轮询：
 
-#### `setup_logger(config, name)` 函数
+```python
+f.seek(0, 2)          # 定位到文件末尾
+remaining = file_size
+while remaining > 0 and len(lines_found) <= n:
+    read_size = min(8192, remaining)
+    remaining -= read_size
+    f.seek(remaining)
+    chunk = f.read(read_size)
+    ...
+```
 
-- 日志级别：`INFO`
-- 输出目标：滚动文件（`RotatingFileHandler`）+ 控制台（`StreamHandler`）
-- 日志格式：`%(asctime)s [%(levelname)s] %(name)s: %(message)s`
-- 默认配置：单文件最大 10MB，保留 7 个备份
+#### result_writer.py — 结果写入
 
----
+**Schema 版本**：v2 格式包含 `latest`（最新一条）和 `history`（最多 50 条，最新在前）。兼容读取 v1 旧格式（单条记录）自动迁移。
 
-### 4.10 前端静态文件
+#### scheduler_controller.py — 子进程管理
 
-#### `static/index.html`
+两种停止接口的区别：
 
-Web 管理界面，包含两个 Tab：
+| 方法 | 等待时间 | 适用场景 |
+|------|----------|----------|
+| `stop()` | 最多 15 秒 | Web 界面「停止任务」，给浏览器正常关闭留足时间 |
+| `stop_immediately()` | 最多 2 秒 | 托盘「退出」，快速终止，不在意浏览器关闭流程 |
 
-1. **任务控制 Tab**：调度器状态指示、启动/停止按钮、"测试效果"按钮、运行日志面板、领券结果展示
-2. **配置管理 Tab**：Cron 时间列表（两列网格）、活动 URL 列表、JD Area 编码、浏览器模式开关、刷新间隔、闲时找券开关（含时间段配置）、QQ 邮箱通知配置、保存按钮
-
-#### `static/app.js`
-
-前端核心逻辑：
-
-| 函数 | 职责 |
-|------|------|
-| `switchTab(name)` | Tab 切换 |
-| `loadVersion()` | 加载版本号 |
-| `loadConfig()` | 加载配置填充表单 |
-| `saveConfig()` | 收集表单数据 POST 保存 |
-| `pollStatus()` / `fetchStatus()` | 轮询调度器状态（每 5 秒） |
-| `startScheduler()` / `stopScheduler()` | 启停调度器 |
-| `runNow()` | 立即执行一次 |
-| `loadLogs()` / `renderLogs()` | 加载并渲染日志 |
-| `pollLogs()` | 轮询日志（每 3 秒） |
-| `clearLogs()` | 清空日志 |
-| `loadResult()` / `renderResult()` | 加载并渲染领券结果（含历史记录） |
-| `_updateIdleTimeRangeVisibility()` | 闲时找券开关联动显示/隐藏时间段 |
-| `_updateEmailNotifyVisibility()` | 邮件通知开关联动显示/隐藏配置区 |
+子进程 stdout 由后台线程 `_pipe_output()` 实时转发到主进程日志（加 `[worker]` 前缀），用户在 Web 界面日志区能看到 worker 的所有输出。
 
 ---
 
-## 五、配置说明 (`config.yaml`)
+### 4.7 src/email_notifier.py — 邮件通知
+
+使用 `smtplib.SMTP_SSL`，连接 QQ 邮箱 SMTP 服务器（`smtp.qq.com:465`），用 QQ 邮箱授权码（非登录密码）认证。
+
+发件人地址由 QQ 号自动拼接：`{qq}@qq.com`。收件人留空则发给自己。
+
+邮件标题根据结果动态生成：`✅ 抢券成功 N 张` / `❌ 未抢到券` / `ℹ️ 无结果`。
+
+---
+
+### 4.8 src/logger_setup.py — 日志系统
+
+`RotatingFileHandler`，默认单文件上限 10MB，保留 7 个备份。格式：
+
+```
+%(asctime)s [%(levelname)s] %(name)s: %(message)s
+```
+
+同时输出到文件和控制台（`StreamHandler`）。worker 子进程的 stdout 由主进程的 `_pipe_output` 线程捕获，写入同一个 `app.log`，因此日志中 worker 输出带 `[worker]` 前缀。
+
+
+---
+
+## 五、前端实现细节
+
+### 5.1 整体结构
+
+`static/index.html` + `static/app.js` + `static/style.css`，纯原生，无 Vue/React/jQuery 依赖。
+
+**双 Tab 布局**：
+- **任务控制 Tab**：状态指示灯、启动/停止/立即测试按钮、日志面板、领券结果面板（含历史）
+- **配置管理 Tab**：触发时间、活动目标、抢券行为设置（三列 grid）、闲时找券、邮件通知
+
+Tab 切换通过 `display:none/block` 控制，并带 0.15s `fadeIn` 动画。
+
+---
+
+### 5.2 配置页 UI 布局
+
+配置页核心是一个 **CSS Grid 三列布局**，使"活动目标 URL"、"行为设置"三项（弹出浏览器窗口 / 抢券刷新间隔 / 收货地址编码）复用相同列宽，视觉对齐：
+
+```css
+.config-grid3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px 24px;
+  align-items: start;
+}
+.config-grid3-span2 { grid-column: span 2; }
+.config-grid3-span3 { grid-column: span 3; }
+```
+
+HTML 结构：
+```
+config-grid3
+  ├── [span2] 优惠券活动 URL 列  (#target-url-col)
+  ├── [span1] 备注名称列         (#target-name-col)
+  ├── [span3] 分割线 + 小标题
+  ├── [span1] 弹出浏览器窗口
+  ├── [span1] 抢券刷新间隔
+  └── [span1] 收货地址编码
+```
+
+URL 和名称分两个独立 `div` 列（`#target-url-col` / `#target-name-col`），`addTargetRow()` 同步向两列各追加一个 input，删除时也同步删除。这样 URL 跨两列、名称占第三列，视觉上形成"宽URL + 短名称"的自然对齐。
+
+---
+
+### 5.3 触发时间选择器
+
+cron 表达式在界面上以"每天 HH:MM 触发"的时间选择器形式展示，不暴露 cron 语法：
+
+```js
+// cron → 时间
+function cronToTime(expr) {
+  const parts = expr.trim().split(/\s+/);
+  // "29 10 * * *" → { hour: 10, minute: 29 }
+  return { hour: parseInt(parts[1]), minute: parseInt(parts[0]) };
+}
+
+// 时间 → cron（保存时转回）
+function timeToCron(row) {
+  const h = row.querySelector('.cron-hour').value;
+  const m = row.querySelector('.cron-minute').value;
+  return `${m} ${h} * * *`;
+}
+```
+
+每行 cron-row 内置两个 `<select>`（小时 0-23、分钟 0-59），样式上隐藏原生 select，通过自定义 `.time-picker` 组件（绝对定位下拉列表）渲染，视觉风格统一。
+
+---
+
+### 5.4 日志面板
+
+日志面板是前端最复杂的部分，涉及多个交互细节：
+
+#### 轮询机制
+
+```js
+function pollLogs() {
+  setInterval(() => {
+    if (state.schedulerRunning) loadLogs();
+  }, 3000);
+}
+```
+
+只在 `state.schedulerRunning === true` 时才发请求。停止任务时主动拉一次最终日志，之后轮询静默。
+
+#### 选区保护（双重检测）
+
+每次 `renderLogs()` 执行两道检测，避免刷新破坏用户正在复制的文字：
+
+**第一道：内容去重**
+```js
+if (logEl.innerHTML === html) {
+  _updateLogBadges(hasWarning, hasError);
+  return;  // 内容未变化，跳过 DOM 更新
+}
+```
+
+**第二道：选区检测**
+```js
+const sel = window.getSelection();
+if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+  const range = sel.getRangeAt(0);
+  if (logEl.contains(range.commonAncestorContainer)) {
+    _updateLogBadges(hasWarning, hasError);
+    return;  // 用户正在选中日志文字，跳过本次更新
+  }
+}
+```
+
+注意：两道检测都还会调用 `_updateLogBadges()` 更新标题徽章，不因跳过 DOM 更新而遗漏状态变化。
+
+#### 自动滚动控制
+
+```js
+const state = { logAutoScroll: true };
+
+function toggleLogScroll() {
+  state.logAutoScroll = !state.logAutoScroll;
+  // 按钮文字/样式切换：⏸ 暂停滚动 ↔ ▶ 自动滚动
+}
+```
+
+`renderLogs()` 最后只在 `state.logAutoScroll` 为 true 时才 `scrollTop = scrollHeight`。
+
+#### 警告/错误徽章
+
+遍历日志行，检测含 `ERROR` / `WARNING` 的行，在日志标题旁显示彩色徽章：
+
+```js
+const hasError   = lines.some(l => l.includes('ERROR'));
+const hasWarning = lines.some(l => l.includes('WARNING') || l.includes('WARN'));
+```
+
+```css
+.log-badge-warn  { color: #d46b08; background: #fff7e6; border: 1px solid #ffd591; }
+.log-badge-error { color: #cf1322; background: #fff1f0; border: 1px solid #ffa39e; }
+```
+
+#### 日志行着色
+
+```js
+if (line.includes('ERROR'))             return `<span class="log-error">${escaped}</span>`;
+else if (line.includes('WARNING') || line.includes('WARN'))
+                                        return `<span class="log-warning">${escaped}</span>`;
+```
+
+深色背景（`#1e1e2e`）+ 红色/橙色行，视觉区分清晰。
+
+#### 复制日志
+
+优先用 `navigator.clipboard.writeText()`，降级到创建临时 `<textarea>` + `execCommand('copy')`，兼容旧环境。
+
+---
+
+### 5.5 领券结果面板
+
+最新一条结果在面板顶部直接展示（汇总 + 详情表格），历史记录用 `<details>` 折叠展示，从第 2 条开始（第 1 条已在上方展示）：
+
+```js
+const older = history.slice(1);
+```
+
+每条历史记录内嵌一个可展开的 `<details>`，点开显示该次的详情表格。
+
+`translateFailReason()` 把后端英文枚举值转为中文：`out_of_stock` → `券已抢完`，`login_required` → `需要重新登录`，支持精确匹配和模糊关键词匹配两种方式。
+
+---
+
+### 5.6 闲时找券开关联动
+
+```js
+function _updateIdleTimeRangeVisibility() {
+  const enabled = document.getElementById('idle-check-toggle').checked;
+  document.getElementById('idle-time-range-group').style.display = enabled ? '' : 'none';
+}
+```
+
+邮件通知开关同理。两者在 `DOMContentLoaded` 时绑定 `change` 事件，在 `loadConfig()` 后也立即调用一次同步初始状态。
+
+闲时找券的时间段用 `<select>` 选择小时（0-23），`DOMContentLoaded` 时动态生成 24 个 `<option>`，避免 HTML 中硬写。
+
+---
+
+### 5.7 Toast 提示
+
+全局单例，3 秒后自动消失，重复触发时重置计时器：
+
+```js
+let _toastTimer = null;
+function showToast(message, type = 'info') {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.className = `toast ${type} show`;
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { toast.className = 'toast'; }, 3000);
+}
+```
+
+三种类型：`success`（绿）/ `error`（红）/ `info`（蓝），CSS `transition: opacity 0.3s` 淡入淡出。
+
+
+---
+
+## 六、配置系统
+
+### 6.1 config.yaml 完整字段
 
 ```yaml
+credential:
+  cookie: ''            # 首次运行后可留空，凭证已加密存储在 data/credentials.enc
+
 schedule:
-  - '29 10 * * *'   # 每天 10:29 开始抢
+  - '29 10 * * *'       # 每天 10:29 触发（10:30 开抢，提前 1 分钟）
   - '29 11 * * *'
   - '29 16 * * *'
   - '29 17 * * *'
+
 coupon_targets:
-  - name: 京东外卖百补好运券
-    url: https://hour.jd.com/...
-jd_area: '17_1381_50713_62969'
-headless: false
-grab_interval_ms: 200
-idle_check_enabled: false       # 闲时找券开关
-idle_check_start_hour: 10       # 巡检开始小时
-idle_check_end_hour: 18         # 巡检结束小时
-notify_email:                   # 可选，不填则不发通知
+  - url: 'https://hour.jd.com/...'
+    name: '京东外卖百补好运券'
+
+jd_area: '17_1381_50713_62969'   # 省_市_区_街道，影响可见券范围
+headless: false                   # false=弹出窗口，true=后台静默
+grab_interval_ms: 300             # 抢券刷新间隔（毫秒），建议 200~2000
+
+idle_check_enabled: false         # 闲时找券开关
+idle_check_start_hour: 10         # 巡检开始小时（0~23）
+idle_check_end_hour: 18           # 巡检结束小时（0~23）
+
+notify_email:                     # 可选，不填则不发通知
   qq: '123456789'
-  auth_code: 'xxxxxxxxxxxx'     # QQ 邮箱授权码（非登录密码）
-  receiver: ''                  # 留空则发给自己
+  auth_code: 'xxxxxxxxxxxx'       # QQ 邮箱授权码（非登录密码）
+  receiver: ''                    # 留空则发给自己
+
+log:
+  path: 'logs/app.log'
+  max_bytes: 10485760             # 10 MB
+  backup_count: 7
 ```
 
-**关键配置项说明**：
+### 6.2 Pydantic 模型（src/models.py）
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `coupon_targets` | 数组 | 必填 | 优惠券活动目标列表 |
-| `schedule` | 数组 | 必填 | cron 表达式列表 |
-| `headless` | 布尔 | false | 浏览器模式 |
-| `jd_area` | 字符串 | 空 | 影响可见券范围 |
-| `grab_interval_ms` | 整数 | 200 | 抢券刷新间隔（毫秒） |
-| `request_timeout` | 元组 | (5, 15) | HTTP 超时（连接秒数, 读取秒数） |
-| `idle_check_enabled` | 布尔 | false | 是否启用闲时找券 |
-| `idle_check_start_hour` | 整数 | 10 | 闲时巡检开始小时（0~23） |
-| `idle_check_end_hour` | 整数 | 18 | 闲时巡检结束小时（0~23） |
-| `notify_email.qq` | 字符串 | 空 | QQ 号（发件邮箱 = QQ号@qq.com） |
-| `notify_email.auth_code` | 字符串 | 空 | QQ 邮箱授权码 |
-| `notify_email.receiver` | 字符串 | 空 | 收件人邮箱，留空则发给自己 |
+所有配置字段通过 Pydantic v2 `BaseModel` 定义，使用 `Field()` 声明默认值和描述。校验失败时 `ConfigValidationError` 包含出错字段路径和原因，精确到具体字段。
 
----
+`AppConfig` 中 `schedule` 和 `coupon_targets` 字段标注 `min_length=1`，确保不能保存空列表。
 
-## 六、数据流
-
-### 6.1 配置加载流
+### 6.3 配置加载流程
 
 ```
 config.yaml / config.json
     │
     ▼
 ConfigLoader.load()
-    │
-    ├── _detect_format() → 判定 YAML / JSON
-    ├── 解析文件 → raw dict
-    └── _validate() → Pydantic AppConfig
-                           │
-                           ▼
-                   CredentialManager / CouponCrawler / Scheduler
-```
-
-### 6.2 领券任务执行流
-
-```
-定时触发 / 手动触发 (--once / --run-now)
-    │
-    ▼
-TaskRunner.run()
-    │
-    ├── ① CredentialManager.is_valid() → 检查登录有效性
-    ├── ② CredentialManager.get_headers() → 获取登录凭证
-    ├── ③ CouponCrawler.set_session_cookie() → 注入登录凭证
-    ├── ④ CouponCrawler.run(force) → 执行领券
-    │       │
-    │       ├── _ensure_browser() → 预热浏览器
-    │       └── _grab_coupons() → 轮询抢券（T:55 ~ T+1:20）
-    │               │
-    │               ├── 刷新页面 → 扫描按钮 → 点击
-    │               ├── 检测风控 / 登录过期
-    │               └── 返回 ClaimResult[]
-    │
-    ├── ⑤ result_writer.write_result() → 写入 last_result.json
-    ├── ⑥ email_notifier.send_result_email() → 发送 QQ 邮箱通知（若已配置）
-    └── ⑦ 记录完成日志
-```
-
-### 6.4 闲时找券流
-
-```
-worker.py 主循环（每秒检测）
-    │
-    ├── 未到节拍时间 → 跳过
-    ├── 不在时间段内（start_hour:01 ~ end_hour:56）→ 跳过，等下一节拍
-    ├── 处于定点抢券忙时窗口（触发分钟:25 ~ 开抢分钟:25）→ 60s 后重判
-    └── 正常 → CouponCrawler.idle_check()
-                │
-                ├── 浏览器未启动 → 直接返回（不重新弹出）
-                ├── page.reload() → 等待接口响应
-                ├── 扫描 .coupon-button-section
-                ├── 发现「立即抢券」→ 连点 3 次，记录日志
-                └── 无按钮 → 静默返回，等待下一节拍
-```
-
-### 6.3 Web API 请求流
-
-```
-浏览器 (index.html)
-    │
-    ├── GET/POST /api/config → ConfigAPI → config.yaml
-    ├── GET/POST /api/scheduler/* → SchedulerController → subprocess worker.py
-    ├── GET/DELETE /api/logs → LogReader → logs/app.log
-    ├── GET /api/result → ResultAPI → data/last_result.json
-    └── GET /api/version → 返回版本号
+    ├── _detect_format()  →  扩展名判断 yaml/json，其他抛异常
+    ├── yaml.safe_load() / json.load()
+    ├── 顶层必须是 dict
+    └── _validate()  →  AppConfig.model_validate(raw)
+                           ├── 成功 → 返回 AppConfig
+                           └── ValidationError → 取第一个错误
+                                └── 抛 ConfigValidationError(field, message)
 ```
 
 ---
 
 ## 七、安全设计
 
-| 安全措施 | 实现方式 |
-|----------|----------|
-| Cookie 加密存储 | Fernet (AES-128-CBC + HMAC)，密钥存独立文件，不通过 config.yaml 传递 |
-| 密钥自动生成 | 首次运行时自动生成 `fernet.key` |
-| 凭证失效标记 | 内部 `_valid` 标志，失效后拒绝使用 |
-| 日志脱敏 | Cookie 等敏感信息不记录到日志 |
-| Web 界面认证 | Basic Auth，密码通过环境变量 `WEB_PASSWORD` 设置 |
-| 常量时间比较 | 使用 `hmac.compare_digest` 防时序攻击 |
-| 原子文件写入 | `os.replace` 原子替换，防写入中断损坏 |
-| 无数据外传 | 程序不向任何第三方服务器发送数据，所有操作在本机浏览器中执行 |
-
----
-
-## 八、依赖关系
-
-### Python 依赖 (`requirements.txt`)
-
-| 包名 | 版本 | 用途 |
-|------|------|------|
-| `flask` | >=3.0.0 | Web 框架 |
-| `waitress` | >=3.0.0 | 生产级 WSGI 服务器 |
-| `playwright` | >=1.44.0 | 浏览器自动化 |
-| `apscheduler` | ==3.10.4 | 定时任务调度 |
-| `pydantic` | >=2.7.0 | 配置数据校验 |
-| `pyyaml` | >=6.0.0 | YAML 配置解析 |
-| `cryptography` | >=42.0.0 | Fernet 加密 |
-| `requests` | >=2.32.0 | HTTP 请求 |
-| `pystray` | (隐式依赖) | 系统托盘图标 |
-| `Pillow` | (隐式依赖) | 托盘图标生成 |
-
-### 模块依赖图
-
-```
-main.py
-  ├── src.web.app (Flask app)
-  │     ├── src.web.auth_middleware
-  │     ├── src.web.config_api → src.config_loader
-  │     ├── src.web.scheduler_controller → subprocess → worker.py
-  │     ├── src.web.log_reader
-  │     ├── src.web.result_api → data/last_result.json
-  │     └── src.version
-  └── pystray (系统托盘)
-
-worker.py
-  ├── src.config_loader → src.models
-  ├── src.auth_manager → src.models
-  ├── src.coupon_crawler → src.models
-  ├── src.task_runner
-  │     ├── src.auth_manager
-  │     ├── src.coupon_crawler
-  │     ├── src.email_notifier → src.models
-  │     └── src.web.result_writer → src.models
-  └── src.logger_setup → src.models
-
-login.py
-  ├── playwright.sync_api
-  ├── yaml
-  └── src.models (间接)
-```
-
----
-
-## 九、运行方式
-
-### 9.1 开发环境运行
-
-**第一步：安装依赖**
-
-```bash
-pip install -r requirements.txt
-playwright install msedge
-```
-
-**第二步：获取 Cookie**
-
-```bash
-# 打开浏览器手动登录京东，自动保存 Cookie
-python login.py
-```
-
-**第三步：启动应用**
-
-```bash
-# 方式一：托盘 + Web 界面（推荐）
-python main.py
-
-# 方式二：仅 Web 界面（无托盘）
-python web_app.py
-
-# 方式三：直接启动抢券（带浏览器窗口）
-python worker.py
-```
-
-### 9.2 Windows 快捷方式
-
-| 脚本 | 用途 |
+| 措施 | 实现 |
 |------|------|
-| `启动.bat` | 启动管理界面（优先运行 exe，否则运行 `python main.py`） |
-| `直接抢券.bat` | 直接启动抢券进程（不开管理界面） |
-| `打包.bat` | 自动递增版本号 → PyInstaller 打包 → 清理敏感文件 |
-
-### 9.3 生产环境（打包后）
-
-1. 运行 `打包.bat` 生成 `.exe` 文件到 `dist/` 目录
-2. 分发 `dist/` 目录给最终用户
-3. 用户双击 `京东外卖定时优惠券抢券助手_v1.0.17.exe` 即可运行
-4. 首次运行需在 Web 界面配置 Cookie 或使用 `login.py`
-
-### 9.4 命令行参数
-
-| 入口 | 参数 | 说明 |
-|------|------|------|
-| `main.py` | `--config` | 指定配置文件路径 |
-| `main.py` | `--port` | 指定 Web 端口（默认 5000） |
-| `main.py` | `--worker` | 工作进程模式（内部使用） |
-| `worker.py` | `--once` | 立即执行一次后退出 |
-| `worker.py` | `--run-now` | 立即执行一次后继续等待调度 |
-| `web_app.py` | `WEB_PORT` 环境变量 | Web 端口（默认 8080） |
+| Cookie 加密存储 | Fernet（AES-128-CBC + HMAC），密钥存独立文件 |
+| 密钥自动生成 | 首次运行自动生成 `fernet.key`，不需要手动操作 |
+| 凭证失效标记 | `_valid` 内存标志，失效后拒绝使用，等待用户重新登录 |
+| 日志脱敏 | Cookie 等敏感值不记录到日志（只记录操作描述） |
+| Web 界面认证 | Basic Auth，`WEB_PASSWORD` 环境变量控制，`hmac.compare_digest` 防时序攻击 |
+| 静态资源放行 | `/` 和 `/static/` 路径无需认证，防止认证页面本身无法加载 |
+| 原子文件写入 | config.yaml 和 last_result.json 均用 `os.replace()` 原子替换，防写入中断损坏 |
+| 授权码掩码 | Web 界面返回的 auth_code 替换为 `••••••••`，前端传回掩码时后端保留原值不覆盖 |
+| 本地监听 | Flask 只监听 `127.0.0.1`，不对外暴露 |
+| 无数据外传 | 程序不向任何第三方服务器发送数据（邮件通知除外，仅发往用户自己的收件箱） |
 
 ---
 
-## 十、打包部署
+## 八、打包部署
 
-### `build.spec` (PyInstaller)
-
-```
-输入: main.py + worker.py
-输出: 京东外卖定时优惠券抢券助手_v{version}.exe
-图标: static/logo.ico
-模式: 无控制台窗口 (console=False)
-数据文件: static/ → static/
-排除项: Anaconda 大型包 (numpy, pandas, matplotlib, IPython, jupyter 等)
-隐藏导入: waitress, flask, apscheduler, cryptography, playwright, pystray, PIL 等
-```
-
-### `打包.bat` 流程
+### 8.1 build.spec（PyInstaller）
 
 ```
-① 自动递增 src/version.py 补丁版本号
-② 杀掉残留进程
+入口：[main.py, worker.py]   ← 双入口，worker 以 --worker 参数调用自己
+输出：京东外卖定时优惠券抢券助手.exe
+图标：static/logo.ico
+模式：console=False（无终端窗口）
+数据：static/ → static/
+排除：numpy/pandas/matplotlib/IPython/jupyter 等大型包（来自 Anaconda 环境）
+隐藏导入：waitress/flask/apscheduler/cryptography/playwright/pystray/PIL 等
+```
+
+**双入口必要性**：打包后不存在独立的 `python worker.py`，worker 模式通过 `sys.executable --worker` 让 exe 以 worker 模式再次启动自己，`sys.frozen` 标志用于区分源码和打包环境。
+
+### 8.2 打包流程（打包.bat）
+
+```
+① bump_version.py     自动递增 src/version.py 的补丁版本号
+② 杀掉残留进程（taskkill）
 ③ 清理 build/ 和 dist/ 旧文件
 ④ pyinstaller build.spec --clean --noconfirm
-⑤ 清理 dist/ 中的敏感文件 (data/, logs/)
-⑥ 复制并清理 dist/config.yaml（清空 Cookie）
+⑤ clean_dist_config.py  清理 dist/ 中的敏感文件（data/、logs/）
+⑥ 复制并清理 dist/config.yaml（清空 credential.cookie）
+```
+
+### 8.3 发布 zip（make_zip.py）
+
+从 `src/version.py` 读取版本号，将 exe + config.yaml + 使用说明.txt 打包进 zip，文件名含版本号。
+
+---
+
+## 九、依赖清单
+
+| 包 | 版本要求 | 用途 |
+|----|----------|------|
+| `playwright` | >=1.44.0 | 浏览器自动化（worker 进程） |
+| `flask` | >=3.0.0 | Web 框架 |
+| `waitress` | >=3.0.0 | 生产级 WSGI 服务器（Windows 友好） |
+| `apscheduler` | ==3.10.4 | cron 表达式校验（`CronTrigger.from_crontab`） |
+| `pydantic` | >=2.7.0 | 配置模型校验 |
+| `pyyaml` | >=6.0.0 | YAML 解析 |
+| `cryptography` | >=42.0.0 | Fernet 加密 |
+| `requests` | >=2.32.0 | HTTP session（worker 初始化用） |
+| `pystray` | — | 系统托盘图标 |
+| `Pillow` | — | 托盘图标生成/加载 |
+| `pytest` | — | 测试框架 |
+| `pytest-cov` | — | 覆盖率 |
+| `hypothesis` | — | 属性测试 |
+| `responses` | — | HTTP Mock |
+
+
+---
+
+## 十、技术难点与关键实现
+
+这是整个项目最有复盘价值的部分，记录了开发过程中遇到的真实问题和解决思路。
+
+---
+
+### 10.1 Playwright 跨线程限制 → 双进程架构
+
+**问题**：Playwright `sync_api` 使用 greenlet 协程实现同步接口，要求 browser/page 对象必须在创建它们的同一线程内操作。Flask 的 Waitress 是多线程 WSGI，若在 Flask 请求线程中操作 Playwright，会立即报 `greenlet.error: cannot switch to a different thread`。
+
+**方案**：彻底隔离——Playwright 在独立子进程（worker.py）的主线程中运行，Flask 主进程完全不接触 Playwright。两进程通过文件系统标志文件通信。
+
+**教训**：这类"必须在同线程"的库（Playwright sync、tkinter、pystray 等）要在架构设计阶段就考虑进去，不能事后再改。
+
+---
+
+### 10.2 Edge 浏览器路径兼容
+
+**问题**：Edge 有系统级安装（`Program Files (x86)`）和用户级安装（`%LOCALAPPDATA%`）两种路径，Playwright 的 `channel="msedge"` 有时找不到用户级安装的 Edge。
+
+**方案**：手动枚举三个候选路径，找到第一个存在的就用 `executable_path` 显式指定，都找不到再回退到 `channel="msedge"`：
+
+```python
+_edge_candidates = [
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe"),
+]
+_edge_exe = next((p for p in _edge_candidates if os.path.exists(p)), None)
 ```
 
 ---
 
-## 十一、测试
+### 10.3 托盘退出时浏览器已弹出的竞态问题
 
-项目包含 `tests/` 包结构，但未提供具体测试用例。依赖清单中包含测试工具：
+**问题**：用户点托盘「退出」时，worker 可能正好在执行 `_ensure_browser()`（耗时 3~8 秒）。主进程写入 stop_flag 后，worker 还在浏览器启动过程中感知不到，等浏览器弹出来了才被关掉，体验差。
 
-| 包 | 用途 |
-|----|------|
-| `pytest` | 测试框架 |
-| `pytest-cov` | 覆盖率报告 |
-| `hypothesis` | 属性基测试 |
-| `responses` | HTTP 请求模拟 |
+**方案**：三道关卡 + 快速强杀两种机制配合：
+
+```
+worker 侧：
+  关卡①：_ensure_browser() 调用前检查 stop_flag
+  关卡②：_ensure_browser() 返回后检查 stop_flag
+  关卡③：主循环每秒检查 stop_flag
+
+主进程侧：
+  stop()              等最多 15 秒（Web 界面停止，给浏览器正常关闭时间）
+  stop_immediately()  写 flag + 等 2 秒 + 强杀（托盘退出，速度优先）
+```
+
+关键细节：`stop_immediately()` 在 `os._exit(0)` 之前调用，确保即使浏览器还在启动也会被杀掉。
 
 ---
 
-## 十二、版本历史
+### 10.4 关闭浏览器触发 Edge 崩溃恢复弹窗
+
+**问题**：直接 `browser.close()` 时，Edge 认为上次"异常退出"，下次启动会弹出"恢复标签页？"的提示框，干扰自动化操作。
+
+**方案**：关闭前先通过 `page.goto("about:blank")` 导航到空白页，让 Edge 认为是正常页面跳转而非崩溃，然后再关闭 context 和 browser：
+
+```python
+def close(self):
+    self._stopped = True
+    try:
+        if self._page:
+            try:
+                self._page.goto("about:blank", timeout=3000)
+            except Exception:
+                pass
+        if self._context:
+            self._context.close()
+        if self._browser:
+            self._browser.close()
+        if self._playwright:
+            self._playwright.stop()
+    except Exception:
+        pass
+```
+
+关闭后 Edge 不再弹崩溃恢复提示。注意 `context.close()` 前必须先 `page.goto("about:blank")`，否则 Edge 会将 context 关闭视为标签页崩溃。
+
+---
+
+### 10.5 闲时找券的节拍调度设计
+
+**问题**：闲时找券需要每约 5 分钟执行一次，但不能用 APScheduler（Playwright 跨线程限制），也不能用 `time.sleep(300)`（会错过 stop_flag 检测）。
+
+**方案**：在 worker 主循环中基于"节拍时间戳"调度：
+
+```python
+# 固定节拍：每小时的 :01/:06/:11/.../:56
+_IDLE_BEAT_MINUTES = [1, 6, 11, 16, 21, 26, 31, 36, 41, 46, 51, 56]
+
+# 每次找下一个节拍，加 ±60s 随机偏移，返回 Unix 时间戳
+def _next_idle_check_ts() -> float: ...
+
+# 主循环中判断
+if idle_check_enabled and time.time() >= next_idle_ts:
+    if _is_in_idle_window() and not _is_busy_window(config.schedule):
+        crawler.idle_check()
+    next_idle_ts = _next_idle_check_ts()
+```
+
+**忙时窗口跳过**：触发分钟 `:25` 到开抢分钟 `:30` 期间，`_is_busy_window()` 返回 True，闲时巡检主动跳过，不干扰定点抢券的时间窗口。
+
+**随机偏移的意义**：固定 :01/:06 等整分触发容易被平台识别为机器人，±60s 偏移后触发时间在人类正常操作的范围内。
+
+---
+
+### 10.6 日志面板防刷新破坏选区
+
+**问题**：日志每 3 秒用 `innerHTML` 整体重写，用户划选文字复制时被刷新打断，选区瞬间消失。
+
+**方案**：两道检测（见 5.4），核心代码：
+
+```js
+// 第一道：内容未变化，跳过
+if (logEl.innerHTML === html) return;
+
+// 第二道：用户正在选中日志内容，跳过
+const sel = window.getSelection();
+if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+  const range = sel.getRangeAt(0);
+  if (logEl.contains(range.commonAncestorContainer)) return;
+}
+```
+
+`sel.isCollapsed` 为 `true` 表示光标没有实际选中文字（只是定位），排除这种情况避免误跳过。
+
+`range.commonAncestorContainer` 是选区覆盖范围的共同祖先节点，`logEl.contains()` 判断该节点是否在日志容器内，精确只保护日志区的选区，页面其他地方的选区不影响日志刷新。
+
+---
+
+### 10.7 任务停止后日志停止轮询
+
+**问题**：停止任务后，日志轮询继续每 3 秒拉取，日志框会不停滚动跳到底部，用户无法安静查看最终日志。
+
+**方案**：轮询函数内检查 `state.schedulerRunning`：
+
+```js
+function pollLogs() {
+  setInterval(() => {
+    if (state.schedulerRunning) loadLogs();
+  }, 3000);
+}
+```
+
+停止任务成功后，在 `stopScheduler()` 里主动拉一次最新日志（作为最终快照），之后轮询静默。
+
+---
+
+### 10.8 抢券时序精确控制
+
+**问题**：定时发放的优惠券通常在某分钟的整点瞬间大量并发抢，如果网络稍慢或刷新时机差一点就抢不到，同时过于频繁又容易触发风控。
+
+**关键策略**：
+
+| 策略 | 实现 |
+|------|------|
+| 提前预热页面 | T:30 提前打开页面，T:50 刷新一次让 CDN 数据预缓存 |
+| 监听接口而非等页面完全加载 | `wait_until="commit"` + `expect_response("hours_home_pub", timeout=1500)` |
+| 随机化预热时间 | `:50 ± random(0, 1000ms)`，任务开始时固定一次，避免规律被识别 |
+| 随机间隔补足 | 每轮目标时长 1300~1600ms 随机，扣掉实际耗时后补足 |
+| 连点三次 | 发现按钮后随机间隔（200~500ms）连点 3 次，模拟真人手速 |
+| 宽松风控判断 | 「销售火爆」连续 ≥8 次才终止，偶发继续刷，不误判 |
+
+**`wait_until="commit"` 的意义**：Playwright 默认 `wait_until="load"` 要等所有资源（图片、CSS）加载完，`"commit"` 只等响应头确认，页面开始渲染即返回，比 `"load"` 快 200~800ms，在秒级竞争中是关键优势。
+
+---
+
+### 10.9 打包后子进程启动兼容
+
+**问题**：源码运行时用 `python worker.py`；打包为 exe 后没有独立的 `python` 解释器和 `worker.py` 文件，直接调用会报错。
+
+**方案**：
+
+```python
+def _get_worker_cmd(config_path, run_now=False, once=False):
+    if getattr(sys, "frozen", False):  # PyInstaller 打包环境
+        cmd = [sys.executable, "--worker", "--config", config_path]
+    else:                               # 源码运行
+        cmd = [sys.executable, "worker.py", "--config", config_path]
+    ...
+    return cmd
+```
+
+`sys.frozen` 是 PyInstaller 在打包 exe 中注入的标志，`True` 表示当前在打包环境运行，`sys.executable` 此时指向 exe 自身。`main.py` 收到 `--worker` 参数后分发给 `worker.py` 的 `main()` 函数执行。
+
+---
+
+### 10.10 原子文件写入防损坏
+
+**问题**：配置文件或结果文件在写入过程中如果程序崩溃/断电，会产生半写入的损坏文件，下次启动时解析失败。
+
+**方案**：先写临时文件，成功后原子替换：
+
+```python
+# config_api.py
+fd, tmp_path = tempfile.mkstemp(dir=dir_, suffix=".tmp")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    yaml.dump(data, f, ...)
+os.replace(tmp_path, path)  # 原子操作，系统保证不会中途失败
+
+# result_writer.py
+with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp_path = f.name
+os.replace(tmp_path, path)
+```
+
+`os.replace()` 在同一文件系统内是原子操作（POSIX rename 语义），Windows 上 Python 3.3+ 同样保证原子性。
+
+
+---
+
+## 十一、版本历史
 
 | 版本 | 说明 |
 |------|------|
 | 1.0.0 | 初始发布版本 |
-| 1.0.17 | 新增闲时找券、QQ 邮箱通知；抢券结束时间改为开抢分钟 :20 |
+| 1.0.17 | 新增闲时找券、QQ 邮箱通知；结果文件支持历史记录（最多 50 条） |
+| 1.0.21 | CODE_WIKI.md 建立；抢券结束时间改为开抢分钟 `:20` |
+| 1.0.24 | 修复日志选区被刷新破坏（双重检测）；任务停止后日志停止轮询；修复托盘退出仍弹浏览器的竞态（三道关卡 + `stop_immediately()`） |
+| 1.0.28 | 配置页 UI 重构：三列 Grid 布局，触发时间改为时间选择器，URL 和名称分列；新增日志标题徽章（有警告/有错误）；新增暂停滚动和复制日志按钮；停止按钮改为描边样式（`btn-outline-danger`） |
+| 1.0.31 | 抢券结束时间从 `:20` 改为 `:25`；配置页三列顺序调整（弹出窗口 → 刷新间隔 → 收货地址）；CODE_WIKI.md 全面重写至当前版本 |
+
+---
+
+*文档维护说明：每次有架构变更、新增功能、技术难点解决时同步更新本文档，重点记录"为什么这么做"而不只是"做了什么"。*
