@@ -169,7 +169,15 @@ def main() -> None:
     from src.config_loader import ConfigLoader as _CL
     try:
         _cfg = _CL().load(args.config)
-        logger.info("调度计划：%s", "、".join(_cfg.schedule))
+        def _cron_to_time(expr: str) -> str:
+            """将 'MM HH * * *' 格式的 cron 表达式转为 'HH:MM' 可读时间，无法解析则原样返回。"""
+            parts = expr.strip().split()
+            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                return f"{int(parts[1]):02d}:{int(parts[0]):02d}"
+            return expr
+
+        readable = "、".join(_cron_to_time(e) for e in _cfg.schedule)
+        logger.info("调度计划：每天 %s", readable)
         logger.info("浏览器已就绪，等待调度触发时自动开始抢券")
     except Exception:
         pass
