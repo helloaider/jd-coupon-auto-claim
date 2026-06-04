@@ -544,6 +544,7 @@ CouponCrawler
 ├── _grab_coupons(page, force=False)        轮询抢券核心逻辑
 ├── _switch_to_ongoing_tab(page)            切换到「正在抢券中」tab
 ├── _check_result(page, coupon_info)        判断结果
+├── _log_toast(page, prefix="")            捕获并记录页面 toast 提示到日志
 ├── _close_popup(page)                      关闭弹窗
 └── idle_check()                           闲时巡检（浏览器未启动则静默跳过）
 ```
@@ -689,7 +690,7 @@ if grab_interval_ms > 0:
 
 **风控检测**：「销售火爆」连续出现 8 次（`RISK_CONTROL_THRESHOLD = 8`）才判定风控终止，偶发一两次继续刷，避免误判。
 
-**按钮点击**：发现「立即抢券」/「立即领取」后，1 秒内随机间隔连点 3 次（间隔 200~500ms）。
+**按钮点击**：发现「立即抢券」/「立即领取」后，1 秒内随机间隔连点 3 次（间隔 200~500ms）。点击完成等待 800ms 后调用 `_log_toast()` 捕获页面 toast 提示写入日志（如「领取失败，请稍后重试」以 WARNING 级别记录），随后进入下一轮 reload。
 
 **结果判定（两条路径）**：
 - **主路径（流程图）**：切换到「正在抢券中」tab 后，开抢分钟 `:06` 之后，读取按钮文字——`已领取` → SUCCESS，`已使用/已抢光` 等 → FAILED。这是轮询过程中的实时判定。

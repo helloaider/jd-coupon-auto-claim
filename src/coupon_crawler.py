@@ -485,6 +485,8 @@ class CouponCrawler:
                         # 点击后等待 800ms 再进入下一轮 reload，
                         # 给服务端处理时间，减少紧跟其后的接口超时 warning
                         page.wait_for_timeout(800)
+                        # 捕获点击后页面弹出的 toast 提示并写入日志
+                        self._log_toast(page)
                         break
 
                     if text in ("销售火爆，请稍后再试",):
@@ -599,6 +601,55 @@ class CouponCrawler:
             claimed_at=datetime.now(),
         )
 
+    def _log_toast(self, page, prefix: str = "") -> None:
+        """
+        捕获页面上当前可见的 toast 提示文字并写入日志。
+
+        京东页面常见 toast 容器选择器（按优先级依次尝试）：
+          - .vip-toast（旧版）
+          - .sku-toast（商品详情页）
+          - .o2-toast（新版通用）
+          - .tips-toast
+          - [class*="toast"]（兜底，匹配所有带 toast 的类名）
+
+        在每次点击「立即抢券」/「立即领取」按钮后、页面 reload 前调用，
+        不修改页面状态，所有异常均静默忽略，不影响主流程。
+        """
+        _TOAST_SELECTORS = [
+            ".vip-toast",
+            ".sku-toast",
+            ".o2-toast",
+            ".tips-toast",
+            "[class*='toast']",
+        ]
+        # 成功/失败关键词对应日志级别
+        _SUCCESS_KEYWORDS = {"领取成功", "抢券成功", "已放入", "去使用", "已领取", "抢到了"}
+        _WARN_KEYWORDS    = {"领取失败", "请稍后重试", "系统繁忙", "网络异常", "销售火爆",
+                             "已抢完", "已售罄", "库存不足", "已抢光", "活动已结束"}
+
+        seen: set[str] = set()
+        for selector in _TOAST_SELECTORS:
+            try:
+                els = page.locator(selector).all()
+                for el in els:
+                    try:
+                        if not el.is_visible(timeout=200):
+                            continue
+                        msg = el.inner_text(timeout=300).strip()
+                        if not msg or msg in seen:
+                            continue
+                        seen.add(msg)
+                        if any(kw in msg for kw in _SUCCESS_KEYWORDS):
+                            self._logger.info("%sToast 提示：%s", prefix, msg)
+                        elif any(kw in msg for kw in _WARN_KEYWORDS):
+                            self._logger.warning("%sToast 提示：%s", prefix, msg)
+                        else:
+                            self._logger.info("%sToast 提示：%s", prefix, msg)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
     def _close_popup(self, page) -> None:
         """尝试关闭弹窗。"""
         try:
@@ -671,6 +722,8 @@ class CouponCrawler:
                                 page.wait_for_timeout(_r.randint(200, 500))
                         # 等待一下看结果
                         page.wait_for_timeout(800)
+                        # 捕获点击后页面弹出的 toast 提示并写入日志
+                        self._log_toast(page, prefix="闲时巡检：")
                         try:
                             result_text = page.content()
                             if any(kw in result_text for kw in ["领取成功", "抢券成功", "已放入", "去使用", "已领取"]):
