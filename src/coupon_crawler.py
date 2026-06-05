@@ -473,7 +473,9 @@ class CouponCrawler:
                         import random as _random
                         for i in range(3):
                             try:
-                                section.click(timeout=2000)
+                                # dispatch_event 直接派发点击事件，不等待页面响应，
+                                # 确保 3 次点击在 1 秒内完成
+                                section.dispatch_event("click")
                                 self._logger.info("第 %d 次点击", i + 1)
                             except Exception:
                                 pass
@@ -714,7 +716,7 @@ class CouponCrawler:
                         import random as _r
                         for i in range(3):
                             try:
-                                section.click(timeout=2000)
+                                section.dispatch_event("click")
                                 self._logger.info("闲时巡检：第 %d 次点击", i + 1)
                             except Exception:
                                 pass
