@@ -30,7 +30,7 @@
 
 - 按 cron 表达式定时触发，精确到分钟，在开抢前完成页面预热
 - Playwright 控制 Microsoft Edge，模拟移动端真实用户操作，内置反检测
-- Cookie 加密存储（Fernet），首次扫码登录后长期有效，自动续期
+- Cookie 加密存储（Fernet），首次登录后长期有效，自动续期
 - 内置 Flask Web 管理界面，在线配置、启停任务、查看日志与结果
 - 系统托盘图标（pystray），后台静默运行，无终端窗口
 - 闲时找券：非定点时段按固定节拍巡检，捡漏临时放出的券
@@ -59,7 +59,7 @@
 jd-coupon-auto-claim/
 ├── main.py                  # 主入口：系统托盘 + Flask Web 服务
 ├── worker.py                # 抢券工作进程（由主进程 subprocess 启动）
-├── login.py                 # 独立登录工具（打开浏览器扫码，保存 Cookie）
+├── login.py                 # 独立登录工具（打开浏览器，等待用户手动登录后保存 Cookie）
 ├── web_app.py               # Web 独立入口（无托盘，WEB_PORT/CONFIG_PATH 环境变量）
 ├── config.yaml              # 用户配置文件
 ├── config.example.yaml      # 配置示例
@@ -278,7 +278,8 @@ CR -->|on_credential_updated| AM
 3. worker 加载配置，初始化 `CredentialManager`、`CouponCrawler`
 4. 三道关卡检查 stop_flag（见难点 10.3），通过后调用 `_ensure_browser()`
 5. Edge 启动，移动端上下文，注入反检测脚本 + Cookie
-6. 若检测到登录页，等用户扫码（最多 5 分钟），自动提取并加密保存凭证
+6. 若检测到登录页，等待用户在浏览器中手动完成登录（手机号+验证码或密码登录），登录成功后自动提取并加密保存凭证
+7. 浏览器预热完成后，进行额外的凭证有效性检测：若 `data/credentials.enc` 不存在，**或**文件存在但用 `data/fernet.key` 解密失败（密钥不匹配或文件损坏），则主动触发登录流程，重新等待用户手动登录
 7. 浏览器就绪，进入 `while True` 主循环，每秒检测触发时间
 
 **抢券阶段**（以 `29 10 * * *` 为例，T = 10:29）
@@ -329,7 +330,7 @@ end
 flowchart TD
 Start(["worker 启动"]) --> EnsureBrowser["_ensure_browser()<br/>启动 Edge，打开活动页"]
 EnsureBrowser --> LoginCheck{"检测到登录页？"}
-LoginCheck --> |是| WaitLogin["等待用户扫码登录（最多5分钟）"]
+LoginCheck --> |是| WaitLogin["等待用户在浏览器中手动登录<br/>（手机号+验证码或密码）"]
 WaitLogin --> SaveCookie["提取登录凭证，调用 update_credential()"]
 SaveCookie --> Ready["浏览器就绪，等待触发时间"]
 LoginCheck --> |否| Ready
@@ -499,7 +500,7 @@ W->>AM : get_headers()
 AM-->>W : {"Cookie": "...", "User-Agent": "..."}
 W->>CR : set_session_cookie(headers["Cookie"])
 W->>CR : _ensure_browser()
-Note over CR : 若登录过期，等待用户扫码登录
+Note over CR : 若登录过期，等待用户在浏览器中手动登录
 CR->>AM : on_credential_updated(new_cookie)
 AM->>AM : update_credential() 加密保存
 
@@ -517,7 +518,7 @@ end
 | `_load_or_create_key()` | 首次运行自动生成密钥写入 `data/fernet.key` |
 | `initialize()` | config.yaml 有 cookie → 覆盖写入加密文件；config 无 cookie + 加密文件存在 → 直接使用；两者都无 → 抛 `LoginExpiredError` |
 | `get_headers()` | 从加密文件解密 Cookie，组装含 UA 的请求头，日志中不记录明文 |
-| `update_credential()` | 浏览器扫码登录后回调，覆盖写入新 Cookie，设 `_valid = True` |
+| `update_credential()` | 浏览器登录后回调，覆盖写入新 Cookie，设 `_valid = True` |
 | `mark_invalid()` / `is_valid()` | 内存中的 `_valid` 标志，失效后拒绝 `get_headers()` |
 
 **凭证双轨设计**：config.yaml 里的 cookie 字段仅作为"初始导入通道"，每次 `initialize()` 时若 config 有值就覆盖加密文件，然后程序运行后 cookie 始终从 `credentials.enc` 读取，Web 界面保存配置时始终写入空 cookie，不暴露凭证。
@@ -583,7 +584,9 @@ WaitSelector --> Done2["浏览器预热完成"]
 Restart --> Launch
 ```
 
-**浏览器内自动登录（`_wait_for_login_if_needed`）**：
+**浏览器内等待用户登录（`_wait_for_login_if_needed`）**：
+
+检测到登录页时，程序在当前页面等待用户手动完成登录（手机号+验证码或密码登录）。登录成功后自动从浏览器提取 Cookie 并加密保存。
 
 ```mermaid
 sequenceDiagram
@@ -595,13 +598,11 @@ participant A as "CredentialManager"
 C->>B : 打开活动页
 B-->>C : 跳转到登录页（URL 含 passport/plogin/login.jd.com）
 C->>C : _wait_for_login_if_needed()
-C->>U : 打印提示：请在浏览器中扫码登录
-Note over B,U : 用户在浏览器中完成登录（最多等待 5 分钟）
-B-->>C : 跳回活动页（URL 不含登录域名）
-C->>C : _extract_cookie_from_browser()
+Note over B,U : 用户在浏览器中手动登录（手机号+验证码或密码）
+B-->>C : 登录成功，跳回活动页
+C->>C : 从浏览器提取 Cookie
 C->>A : on_credential_updated(cookie_str)
 A->>A : update_credential() 加密保存
-C->>B : page.goto(target_url) 跳回活动页
 ```
 
 #### 浏览器初始化（`_ensure_browser`）
@@ -896,7 +897,7 @@ while remaining > 0 and len(lines_found) <= n:
 | worker 启动失败 | 配置文件错误 | 查看日志 `[worker]` 输出，检查 `config.yaml` |
 | 浏览器未弹出 | `headless: true` | 改为 `headless: false` |
 | 任务未触发 | cron 格式错误或系统时间不准 | 确认格式 `分 时 * * *`，分和时为具体数字 |
-| Cookie 过期 | 登录态失效（约 30 天） | 程序自动弹出浏览器，扫码重新登录；或运行 `python login.py` |
+| Cookie 过期 | 登录态失效（约 30 天） | 程序自动弹出浏览器，在浏览器中手动登录后自动更新；或运行 `python login.py` |
 | 密钥文件丢失 | `data/fernet.key` 被删除 | 删除 `data/credentials.enc`，重新登录 |
 | 托盘图标不显示 | pystray/Pillow 未安装 | `pip install pystray pillow` |
 | 浏览器崩溃后未恢复 | `_ensure_browser()` 检测到断连会自动重启 | 查看日志确认重启情况 |
@@ -1256,7 +1257,15 @@ for f in ["data/credentials.enc", "data/fernet.key"]:
 
 ### 8.3 发布 zip（make_zip.py）
 
-从 `src/version.py` 读取版本号，将 exe + config.yaml + 使用说明.txt 打包进 zip，文件名含版本号。
+从 `src/version.py` 读取版本号，将以下内容打包进 zip，文件名含版本号：
+
+- `京东外卖定时优惠券抢券助手.exe`
+- `config.yaml`（已清空 credential.cookie）
+- `使用说明_vX.Y.Z.txt`
+- `data/`（空目录，确保首次运行时凭证文件可正常写入）
+- `logs/`（空目录，确保日志文件可正常写入）
+
+`data/` 和 `logs/` 目录必须随 zip 发布，否则用户解压后直接双击运行，扫码登录时 `credentials.enc` 的写入会因父目录不存在而失败（虽然代码有 `os.makedirs`，但工作目录不对时仍可能出问题）。
 
 ---
 
@@ -1510,6 +1519,36 @@ def _get_worker_cmd(config_path, run_now=False, once=False):
 ```
 
 `sys.frozen` 是 PyInstaller 在打包 exe 中注入的标志，`True` 表示当前在打包环境运行，`sys.executable` 此时指向 exe 自身。`main.py` 收到 `--worker` 参数后分发给 `worker.py` 的 `main()` 函数执行。
+
+---
+
+### 10.12 凭证文件验证：文件不存在或解密失败时主动触发登录
+
+**问题**：仅依赖登录页跳转检测存在盲区——若凭证文件 `data/credentials.enc` 不存在，或文件存在但 `data/fernet.key` 密钥不匹配（如密钥文件被替换）或文件损坏（如写入中断），解密会直接抛异常，导致后续任务全部报错。
+
+**方案**：在浏览器预热完成后额外做一次主动的凭证文件验证，两种异常情况都提前触发登录流程：
+
+1. `credentials.enc` 不存在 → 凭证文件缺失，主动触发登录
+2. 文件存在但用 `fernet.key` 解密失败（密钥不匹配 / 文件损坏）→ 凭证不可用，主动触发登录
+
+```python
+# 浏览器预热完成后的额外凭证验证
+if not os.path.exists("data/credentials.enc"):
+    # 凭证文件不存在，需要登录
+    _need_login = True
+else:
+    try:
+        with open("data/credentials.enc", "rb") as f:
+            ciphertext = f.read()
+        with open("data/fernet.key", "rb") as f:
+            key = f.read()
+        Fernet(key).decrypt(ciphertext)   # 验证能否正常解密
+    except Exception:
+        # 密钥不匹配或文件损坏，需要重新登录
+        _need_login = True
+```
+
+触发登录时，程序在当前浏览器窗口等待用户手动完成登录（手机号+验证码或密码登录），登录成功后自动提取并加密保存凭证。早发现早登录，避免到了抢券时刻才因凭证问题失败。
 
 ---
 

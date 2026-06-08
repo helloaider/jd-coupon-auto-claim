@@ -121,11 +121,16 @@ class CredentialManager:
         """
         返回包含登录凭证的 HTTP 请求头字典。
 
-        若凭证已标记失效，抛出 LoginExpiredError。
+        若凭证已标记失效或凭证文件不存在，抛出 LoginExpiredError。
         日志中不记录凭证明文。
         """
         if not self._valid:
             raise LoginExpiredError("登录已失效，请重新登录。")
+
+        if not os.path.exists(self._store_path):
+            raise LoginExpiredError(
+                "凭证文件不存在，请在浏览器中扫码登录后再试。"
+            )
 
         with open(self._store_path, "rb") as f:
             ciphertext = f.read()
@@ -163,5 +168,9 @@ class CredentialManager:
         self._logger.warning("登录凭证已标记为失效")
 
     def is_valid(self) -> bool:
-        """返回当前登录状态是否有效。"""
-        return self._valid
+        """返回当前登录状态是否有效（凭证文件必须存在且未被标记失效）。"""
+        if not self._valid:
+            return False
+        if not os.path.exists(self._store_path):
+            return False
+        return True

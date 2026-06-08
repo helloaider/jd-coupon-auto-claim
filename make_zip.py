@@ -1,4 +1,4 @@
-"""打包发布 zip：exe + config.yaml + 使用说明.txt"""
+"""打包发布 zip：exe + config.yaml + 使用说明.txt + data/ + logs/"""
 import glob
 import os
 import re
@@ -32,6 +32,11 @@ files = exe_files + ["dist/config.yaml", readme_dst]
 with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as z:
     for f in files:
         z.write(f, os.path.basename(f))
+
+    # 打入空目录（写入占位文件后删除，确保目录结构完整）
+    # data/ 和 logs/ 必须存在，否则首次运行时相对路径写入会失败
+    for empty_dir in ["data/", "logs/"]:
+        z.mkdir(empty_dir)
 
 # 清理临时副本
 os.remove(readme_dst)

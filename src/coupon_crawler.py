@@ -187,6 +187,41 @@ class CouponCrawler:
         except Exception as exc:
             self._logger.warning("登录检测异常：%s", exc)
 
+        # 额外检测：凭证文件不存在，或文件存在但密钥不匹配/文件损坏无法解密
+        # 这两种情况都需要重新登录，主动跳转到登录页等待用户操作
+        import os as _os
+        _need_login = False
+        if not _os.path.exists("data/credentials.enc"):
+            self._logger.warning("凭证文件不存在，需要登录...")
+            _need_login = True
+        else:
+            try:
+                with open("data/credentials.enc", "rb") as _f:
+                    _ciphertext = _f.read()
+                if _os.path.exists("data/fernet.key"):
+                    from cryptography.fernet import Fernet as _Fernet
+                    with open("data/fernet.key", "rb") as _f:
+                        _key = _f.read()
+                    _Fernet(_key).decrypt(_ciphertext)
+                    self._logger.info("凭证文件验证通过")
+                else:
+                    self._logger.warning("密钥文件不存在，需要重新登录...")
+                    _need_login = True
+            except Exception as _e:
+                self._logger.warning("凭证文件无法解密（%s），需要重新登录...", _e)
+                _need_login = True
+
+        if _need_login:
+            try:
+                self._page.goto(
+                    "https://plogin.m.jd.com/login/login",
+                    timeout=15000,
+                    wait_until="domcontentloaded",
+                )
+                self._wait_for_login_if_needed(self._page, url)
+            except Exception as exc:
+                self._logger.warning("主动登录异常：%s", exc)
+
         try:
             self._page.wait_for_selector(".coupon-button-section", timeout=20000)
         except Exception:
@@ -199,8 +234,8 @@ class CouponCrawler:
     def _wait_for_login_if_needed(self, page, target_url: str) -> None:
         """
         检测当前页面是否为登录页。
-        若是，打印提示让用户在浏览器中完成登录，
-        等待跳回正常页面后自动提取并保存 cookie。
+        若是，等待用户在浏览器中手动完成登录（手机号验证码或密码登录），
+        登录后自动提取并保存 cookie，跳回活动页。
         """
         _LOGIN_DOMAINS = ("passport.jd.com", "plogin.m.jd.com", "login.jd.com")
 
@@ -210,9 +245,9 @@ class CouponCrawler:
         if not _is_login_page():
             return
 
-        self._logger.warning("检测到登录页，请在弹出的浏览器窗口中完成登录...")
-        print("\n[登录] 检测到 Cookie 已过期或未配置，请在弹出的浏览器窗口中扫码/登录。")
-        print("[登录] 登录完成后程序将自动继续，无需手动操作。\n")
+        self._logger.warning("检测到登录页，请在浏览器中完成登录...")
+        print("\n[登录] 检测到需要登录，请在浏览器中手动完成登录。")
+        print("[登录] 登录完成后程序将自动继续。\n")
 
         # 等待跳离登录页（最多 5 分钟）
         try:
@@ -229,7 +264,6 @@ class CouponCrawler:
         self._logger.info("登录成功，自动提取 Cookie")
         print("[登录] 登录成功，正在自动保存 Cookie...\n")
 
-        # 提取登录凭证并回调保存
         cookie_str = self._extract_cookie_from_browser()
         if cookie_str:
             self._session_cookie = cookie_str
@@ -239,6 +273,8 @@ class CouponCrawler:
                     self._logger.info("登录凭证已自动保存，后续任务无需重新登录")
                 except Exception as exc:
                     self._logger.warning("保存 Cookie 回调失败：%s", exc)
+        else:
+            self._logger.warning("未能提取到登录凭证，请检查是否登录成功")
 
         # 跳回目标页面
         page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
