@@ -1,4 +1,4 @@
-# 京东外卖定时优惠券抢券助手 — Code Wiki
+# 京东外卖定时优惠券领券助手 — Code Wiki
 
 > 版本：v1.0.31 | 最后更新：2026-06-03
 
@@ -1234,7 +1234,7 @@ for f in ["data/credentials.enc", "data/fernet.key"]:
 
 ```
 入口：[main.py, worker.py]   ← 双入口，worker 以 --worker 参数调用自己
-输出：京东外卖定时优惠券抢券助手.exe
+输出：京东外卖定时优惠券领券助手.exe
 图标：static/logo.ico
 模式：console=False（无终端窗口）
 数据：static/ → static/
@@ -1259,7 +1259,7 @@ for f in ["data/credentials.enc", "data/fernet.key"]:
 
 从 `src/version.py` 读取版本号，将以下内容打包进 zip，文件名含版本号：
 
-- `京东外卖定时优惠券抢券助手.exe`
+- `京东外卖定时优惠券领券助手.exe`
 - `config.yaml`（已清空 credential.cookie）
 - `使用说明_vX.Y.Z.txt`
 - `data/`（空目录，确保首次运行时凭证文件可正常写入）

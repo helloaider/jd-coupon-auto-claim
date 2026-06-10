@@ -79,7 +79,7 @@ def send_result_email(
     else:
         lines.append("本次任务无券详情。")
 
-    lines += ["", "— 由京东外卖定时优惠券抢券助手自动发送"]
+    lines += ["", "— 由京东外卖定时优惠券领券助手自动发送"]
     body = "\n".join(lines)
 
     msg = MIMEText(body, "plain", "utf-8")

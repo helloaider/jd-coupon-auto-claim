@@ -121,7 +121,7 @@ def _run_tray(web_url: str) -> None:
     icon = pystray.Icon(
         name="coupon_tool",
         icon=_make_icon(),
-        title="京东外卖定时优惠券抢券助手",
+        title="京东外卖定时优惠券领券助手",
         menu=menu,
     )
 

@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.abspath('.'))
 from src.version import __version__
 
-APP_NAME = "京东外卖定时优惠券抢券助手"
+APP_NAME = "京东外卖定时优惠券领券助手"
 
 block_cipher = None
 

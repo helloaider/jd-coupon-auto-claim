@@ -14,8 +14,8 @@ if not m:
     raise SystemExit(1)
 
 v = m.group()
-zip_name = "dist/京东外卖定时优惠券抢券助手.zip"
-exe_pattern = "dist/京东外卖定时优惠券抢券助手.exe"
+zip_name = "dist/京东外卖定时优惠券领券助手.zip"
+exe_pattern = "dist/京东外卖定时优惠券领券助手.exe"
 readme_src  = "dist/使用说明.txt"
 readme_dst  = f"dist/使用说明_v{v}.txt"
 

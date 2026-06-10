@@ -445,9 +445,16 @@ function toggleLogScroll() {
  * 仅在调度器运行中时才拉取新日志；停止后不再刷新
  */
 function pollLogs() {
-  setInterval(() => {
+  let lastTaskDoneCount = 0;
+  setInterval(async () => {
     if (state.schedulerRunning) {
-      loadLogs();
+      await loadLogs();
+      // 统计日志里「任务完成」出现次数，有新增则刷新结果区域
+      const doneCount = state.logLines.filter(l => l.includes('任务完成')).length;
+      if (doneCount > lastTaskDoneCount) {
+        lastTaskDoneCount = doneCount;
+        loadResult();
+      }
     }
   }, 3000);
 }
