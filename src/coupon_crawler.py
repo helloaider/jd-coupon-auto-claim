@@ -1,4 +1,4 @@
-"""
+﻿"""
 领券执行器模块（Playwright 浏览器自动化版）
 
 流程：
@@ -33,7 +33,7 @@ class CrawlerTimeoutError(CrawlerError):
 
 
 class CouponCrawler:
-    """领券执行器：用 Playwright 控制 Edge 浏览器自动抢券。"""
+    """领券执行器：用 Playwright 控制 Edge 浏览器自动领券。"""
 
     def __init__(
         self,
@@ -83,7 +83,7 @@ class CouponCrawler:
         """确保浏览器已启动并完成预热，如果没有则启动。"""
         # 已调用 close() 主动停止，不再重新启动
         if self._stopped:
-            raise CrawlerError("爬虫已停止，不允许重新启动浏览器")
+            raise CrawlerError("浏览器已停止，不允许重新启动")
 
         from playwright.sync_api import sync_playwright
 
@@ -135,12 +135,20 @@ class CouponCrawler:
                 channel="msedge",
                 headless=self._headless,
             )
+        # 固定使用一个稳定的移动端 UA
+        _ua = (
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/136.0.0.0 Mobile Safari/537.36"
+        )
+        # 从 UA 中解析 Chrome 版本号，用于对齐 sec-ch-ua 请求头
+        import re as _re
+        _chrome_ver_match = _re.search(r"Chrome/(\d+)", _ua)
+        _chrome_ver = _chrome_ver_match.group(1) if _chrome_ver_match else "136"
+        self._logger.info("本次使用 UA：%s", _ua)
+
         self._context = self._browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Mobile Safari/537.36"
-            ),
+            user_agent=_ua,
             viewport={"width": 390, "height": 844},
             is_mobile=True,
             has_touch=True,
@@ -151,23 +159,38 @@ class CouponCrawler:
             self._context.add_cookies(self._parse_cookies())
             self._logger.info("已注入登录凭证")
 
-        # 注入反检测脚本，覆盖 webdriver 标志
-        self._context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-            window.chrome = { runtime: {} };
-        """)
+        # 应用页面运行时配置
+        from playwright_stealth import Stealth
+        stealth = Stealth(
+            navigator_user_agent_override=_ua,
+            navigator_platform_override="Linux",
+            navigator_languages_override=["zh-CN", "zh", "en-US", "en"],
+            navigator_hardware_concurrency=True,
+            navigator_plugins=True,
+            navigator_permissions=True,
+            webgl_vendor=True,
+            webgl_renderer_override="Mesa DRI Intel(R) UHD Graphics",
+        )
+        stealth.apply_stealth_sync(self._context)
+        self._logger.info("playwright-stealth 页面配置已应用")
 
-        # 注入额外请求头，模拟真实浏览器行为
+        # 设置请求头，与 UA 版本保持一致
         self._context.set_extra_http_headers({
-            "Accept-Language": "zh-CN,zh;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Referer": "https://hour.jd.com/",
-            "Origin": "https://hour.jd.com",
-            "sec-ch-ua": '"Chromium";v="124", "Android WebView";v="124"',
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "sec-ch-ua": f'"Chromium";v="{_chrome_ver}", "Android WebView";v="{_chrome_ver}"',
             "sec-ch-ua-mobile": "?1",
             "sec-ch-ua-platform": '"Android"',
         })
+
+        # 在京东 API 请求上补充请求头
+        def _add_jd_headers(route, req):
+            route.continue_(headers={
+                **dict(req.headers),
+                "Origin": "https://hour.jd.com",
+                "Referer": "https://hour.jd.com/",
+            })
+        for _jd_host in ("api.m.jd.com", "api*.jd.com", "hour.jd.com", "plogin.m.jd.com"):
+            self._context.route(f"https://{_jd_host}/*", _add_jd_headers)
 
         self._page = self._context.new_page()
 
@@ -335,7 +358,7 @@ class CouponCrawler:
 
     def _grab_coupons(self, page, force: bool = False) -> list[ClaimResult]:
         """
-        轮询刷新页面抢券。
+        轮询刷新页面领券。
 
         时间窗口根据调度触发时的分钟数动态计算：
         - 触发分钟:30 前等待
@@ -461,7 +484,7 @@ class CouponCrawler:
                     self._logger.warning(
                         "页面出现「销售火爆，请稍后再试」（连续第 %d 次）%s",
                         risk_control_count,
-                        "，继续刷新..." if risk_control_count < RISK_CONTROL_THRESHOLD else f"，连续 {RISK_CONTROL_THRESHOLD} 次刷新提示销售火爆，判定可能为风控，暂时终止抢券",
+                        "，继续刷新..." if risk_control_count < RISK_CONTROL_THRESHOLD else f"，连续 {RISK_CONTROL_THRESHOLD} 次刷新提示销售火爆，判定可能为风控，暂时终止领券",
                     )
                     if risk_control_count >= RISK_CONTROL_THRESHOLD:
                         return [ClaimResult(
@@ -474,7 +497,7 @@ class CouponCrawler:
             except Exception:
                 pass
 
-            # 切换到「正在抢券中」tab，找不到就扫当前页面
+            # 切换到「正在领券中」tab，找不到就扫当前页面
             now_check = datetime.now()
             check_seconds = now_check.minute * 60 + now_check.second
             after_open = check_seconds >= open_minute * 60 + 6
@@ -486,11 +509,11 @@ class CouponCrawler:
                     try:
                         status_text = tab.locator(".grab-coupon-floor__tab-status").inner_text(timeout=200).strip()
                         self._logger.info("Tab 状态：%s", status_text)
-                        if status_text in ("正在抢券中", "抢券中"):
+                        if status_text in ("正在领券中", "领券中"):
                             tab.click(timeout=1500)
                             page.wait_for_timeout(200)
                             ongoing_tab = tab
-                            self._logger.info("已切换到「正在抢券中」tab")
+                            self._logger.info("已切换到「正在领券中」tab")
                             break
                     except Exception:
                         pass
@@ -532,7 +555,7 @@ class CouponCrawler:
                         self._logger.warning(
                             "按钮显示「销售火爆，请稍后再试」（连续第 %d 次）%s",
                             risk_control_count,
-                            "，继续刷新..." if risk_control_count < RISK_CONTROL_THRESHOLD else f"，连续 {RISK_CONTROL_THRESHOLD} 次刷新提示销售火爆，判定可能为风控，暂时终止抢券",
+                            "，继续刷新..." if risk_control_count < RISK_CONTROL_THRESHOLD else f"，连续 {RISK_CONTROL_THRESHOLD} 次刷新提示销售火爆，判定可能为风控，暂时终止领券",
                         )
                         if risk_control_count >= RISK_CONTROL_THRESHOLD:
                             return [ClaimResult(
@@ -542,17 +565,17 @@ class CouponCrawler:
                             )]
                         break  # 本轮跳出按钮扫描，继续下一轮刷新
 
-                    # 结束条件：只在「正在抢券中」tab 下判断
+                    # 结束条件：只在「正在领券中」tab 下判断
                     if (not force) and after_open and ongoing_tab is not None:
                         if text == "已领取":
-                            self._logger.info("「正在抢券中」tab 显示「已领取」，抢券成功")
+                            self._logger.info("「正在领券中」tab 显示「已领取」，领券成功")
                             return [ClaimResult(
                                 coupon_info=coupon_info,
                                 status=ClaimStatus.SUCCESS,
                                 claimed_at=datetime.now(),
                             )]
                         if text in ("已使用", "已抢光", "已抢完", "已售罄", "库存不足"):
-                            self._logger.info("「正在抢券中」tab 显示「%s」，没有抢到，结束", text)
+                            self._logger.info("「正在领券中」tab 显示「%s」，没有抢到，结束", text)
                             return [ClaimResult(
                                 coupon_info=coupon_info,
                                 status=ClaimStatus.FAILED,
@@ -575,7 +598,7 @@ class CouponCrawler:
         return []
 
     def _switch_to_ongoing_tab(self, page) -> None:
-        """找到「正在抢券中」的 tab 并点击，等待内容渲染。"""
+        """找到「正在领券中」的 tab 并点击，等待内容渲染。"""
         try:
             tabs = page.locator(".grab-coupon-floor__tab-item").all()
             for tab in tabs:
@@ -583,10 +606,10 @@ class CouponCrawler:
                     status_el = tab.locator(".grab-coupon-floor__tab-status")
                     status_text = status_el.inner_text(timeout=500).strip()
                     self._logger.info("Tab 状态：%s", status_text)
-                    if status_text in ("正在抢券中", "抢券中"):
+                    if status_text in ("正在领券中", "领券中"):
                         tab.click(timeout=3000)
                         page.wait_for_timeout(300)  # 等待 tab 内容渲染
-                        self._logger.info("已切换到「正在抢券中」tab")
+                        self._logger.info("已切换到「正在领券中」tab")
                         return
                 except Exception:
                     pass
@@ -594,11 +617,11 @@ class CouponCrawler:
             self._logger.debug("切换 tab 失败：%s", exc)
 
     def _check_result(self, page, coupon_info: CouponInfo) -> ClaimResult:
-        """检查抢券后页面提示，判断成功或失败。"""
+        """检查领券后页面提示，判断成功或失败。"""
         page.wait_for_timeout(500)
         page_text = page.content()
 
-        if any(kw in page_text for kw in ["领取成功", "抢券成功", "已放入", "去使用"]):
+        if any(kw in page_text for kw in ["领取成功", "领券成功", "已放入", "去使用"]):
             return ClaimResult(
                 coupon_info=coupon_info,
                 status=ClaimStatus.SUCCESS,
@@ -661,7 +684,7 @@ class CouponCrawler:
             "[class*='toast']",
         ]
         # 成功/失败关键词对应日志级别
-        _SUCCESS_KEYWORDS = {"领取成功", "抢券成功", "已放入", "去使用", "已领取", "抢到了"}
+        _SUCCESS_KEYWORDS = {"领取成功", "领券成功", "已放入", "去使用", "已领取", "抢到了"}
         _WARN_KEYWORDS    = {"领取失败", "请稍后重试", "系统繁忙", "网络异常", "销售火爆",
                              "已抢完", "已售罄", "库存不足", "已抢光", "活动已结束"}
 
@@ -764,7 +787,7 @@ class CouponCrawler:
                         self._log_toast(page, prefix="闲时巡检：")
                         try:
                             result_text = page.content()
-                            if any(kw in result_text for kw in ["领取成功", "抢券成功", "已放入", "去使用", "已领取"]):
+                            if any(kw in result_text for kw in ["领取成功", "领券成功", "已放入", "去使用", "已领取"]):
                                 self._logger.info("闲时巡检：领取成功")
                             else:
                                 self._logger.info("闲时巡检：点击完成，页面无明确成功提示")

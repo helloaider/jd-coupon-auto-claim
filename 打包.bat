@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 cd /d "%~dp0"
 
 echo [打包] 自动递增版本号...
@@ -10,7 +10,7 @@ if errorlevel 1 (
 )
 
 echo [打包] 开始打包，请稍候...
-taskkill /F /IM "京东外卖抢券工具*" 2>nul
+taskkill /F /IM "京东外卖领券工具*" 2>nul
 del /F /Q dist\*.exe 2>nul
 del /F /Q dist\*.zip 2>nul
 rmdir /S /Q build 2>nul

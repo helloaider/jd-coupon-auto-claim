@@ -13,7 +13,7 @@ def check_auth(password: str, auth_header: str | None) -> bool:
 
     解析 Authorization: Basic <base64> 头，base64 解码后格式为
     username:password（用户名任意，只校验密码部分）。
-    使用 hmac.compare_digest 进行常量时间比较，防止时序攻击。
+    使用 hmac.compare_digest 进行常量时间比较，防止时序侧信道泄露。
     """
     if not auth_header:
         return False
@@ -34,7 +34,7 @@ def check_auth(password: str, auth_header: str | None) -> bool:
 
     _, provided_password = decoded.split(":", 1)
 
-    # 使用常量时间比较，防止时序攻击
+    # 使用常量时间比较，防止时序侧信道泄露
     return hmac.compare_digest(provided_password, password)
 
 

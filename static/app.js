@@ -297,8 +297,9 @@ async function stopScheduler() {
     if (resp.ok) {
       showToast(data.message || '任务已停止', 'success');
       await fetchStatus();
-      // 任务停止后主动拉一次最新日志，之后轮询不再更新
+      // 任务停止后主动拉一次最新日志和结果
       await loadLogs();
+      await loadResult();
     } else {
       showToast(data.message || '停止失败', 'error');
     }
@@ -446,6 +447,7 @@ function toggleLogScroll() {
  */
 function pollLogs() {
   let lastTaskDoneCount = 0;
+  let resultPollCounter = 0;
   setInterval(async () => {
     if (state.schedulerRunning) {
       await loadLogs();
@@ -453,6 +455,12 @@ function pollLogs() {
       const doneCount = state.logLines.filter(l => l.includes('任务完成')).length;
       if (doneCount > lastTaskDoneCount) {
         lastTaskDoneCount = doneCount;
+        loadResult();
+      }
+      // 兜底：每 10 次轮询（约 30 秒）无条件刷新一次结果
+      resultPollCounter++;
+      if (resultPollCounter >= 10) {
+        resultPollCounter = 0;
         loadResult();
       }
     }

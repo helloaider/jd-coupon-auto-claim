@@ -5,6 +5,11 @@ PyInstaller 打包配置
 
 import os
 import sys
+from PyInstaller.utils.hooks import collect_all
+
+# 动态查找 playwright-stealth 的 JS 文件路径
+import playwright_stealth
+_stealth_js_dir = os.path.join(os.path.dirname(playwright_stealth.__file__), 'js')
 
 # 读取版本号（从 src/version.py）
 sys.path.insert(0, os.path.abspath('.'))
@@ -14,13 +19,17 @@ APP_NAME = "京东外卖定时优惠券领券助手"
 
 block_cipher = None
 
+# 强制收集整个 Pillow 包（hiddenimports 不足以覆盖所有子模块）
+pillow_datas, pillow_binaries, pillow_hiddenimports = collect_all('PIL')
+
 a = Analysis(
     ['main.py', 'worker.py'],
     pathex=['.'],
-    binaries=[],
+    binaries=pillow_binaries,
     datas=[
         ('static', 'static'),          # Web 前端静态文件
-    ],
+        (_stealth_js_dir, 'playwright_stealth/js'),  # playwright-stealth JS 文件
+    ] + pillow_datas,
     hiddenimports=[
         'waitress',
         'waitress.server',
@@ -39,6 +48,8 @@ a = Analysis(
         'cryptography.fernet',
         'playwright',
         'playwright.sync_api',
+        'playwright_stealth',
+        'playwright_stealth.stealth',
         'yaml',
         'pydantic',
         'requests',
@@ -46,7 +57,7 @@ a = Analysis(
         'PIL',
         'PIL.Image',
         'PIL.ImageDraw',
-    ],
+    ] + pillow_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

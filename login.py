@@ -1,4 +1,4 @@
-"""
+﻿"""
 京东登录工具
 
 用法：python login.py
@@ -107,7 +107,7 @@ def main():
                 os.remove(f)
                 print(f"   已删除旧凭证文件：{f}")
 
-        print("\n现在可以运行 python main.py 启动自动抢券了")
+        print("\n现在可以运行 python main.py 启动自动领券了")
         browser.close()
 
 

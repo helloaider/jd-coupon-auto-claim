@@ -1,4 +1,4 @@
-"""
+﻿"""
 数据模型模块
 
 包含：
@@ -85,11 +85,11 @@ class AppConfig(BaseModel):
     )
     grab_interval_ms: int = Field(
         default=300,
-        description="抢券刷新间隔（毫秒），建议 100~2000，太快容易被风控",
+        description="领券刷新间隔（毫秒），建议 100~2000，太快容易被风控",
     )
     idle_check_enabled: bool = Field(
         default=False,
-        description="是否启用闲时找券：在非定点抢券时间段内，按固定节拍巡检页面，捡漏临时出现的可领取优惠券",
+        description="是否启用闲时找券：在非定点领券时间段内，按固定节拍巡检页面，捡漏临时出现的可领取优惠券",
     )
     idle_check_start_hour: int = Field(
         default=10,

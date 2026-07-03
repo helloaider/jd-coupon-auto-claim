@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -119,16 +119,16 @@
       <section class="card" id="config-section">
         <form id="config-form" onsubmit="saveConfig(event)">
 
-          <!-- 板块一：触发时间 & 活动目标 / 板块二：抢券行为设置 — 共用三列 grid -->
+          <!-- 板块一：触发时间 & 活动目标 / 板块二：领券行为设置 — 共用三列 grid -->
           <div class="config-block-header">触发时间与活动目标</div>
 
           <div class="form-group">
-            <label>抢券触发时间</label>
+            <label>领券触发时间</label>
             <div id="cron-list"></div>
             <button type="button" class="btn btn-secondary btn-sm" onclick="addCronRow('')" style="margin-top:4px;">
               + 添加时间
             </button>
-            <small class="hint">每天在设定时间自动触发抢券，可添加多个</small>
+            <small class="hint">每天在设定时间自动触发领券，可添加多个</small>
           </div>
 
           <!-- 三列 grid：URL行 + 行为设置行共享列宽 -->
@@ -150,7 +150,7 @@
             <!-- 分割行 -->
             <div class="config-grid3-span3">
               <hr class="section-divider" style="margin:12px 0 8px;" />
-              <div class="config-block-header" style="margin-bottom:10px;">抢券行为设置</div>
+              <div class="config-block-header" style="margin-bottom:10px;">领券行为设置</div>
             </div>
 
             <!-- 行为设置行：三列各一项 -->
@@ -162,11 +162,11 @@
                   <span class="toggle-slider"></span>
                 </span>
               </label>
-              <small class="hint">开启：抢券时弹出浏览器窗口（可视化）；关闭：后台静默运行</small>
+              <small class="hint">开启：领券时弹出浏览器窗口（可视化）；关闭：后台静默运行</small>
             </div>
 
             <div class="form-group" style="margin-bottom:0;">
-              <label for="grab-interval">抢券刷新间隔（毫秒）</label>
+              <label for="grab-interval">领券刷新间隔（毫秒）</label>
               <input
                 type="number"
                 id="grab-interval"
@@ -203,7 +203,7 @@
                 <span class="toggle-slider"></span>
               </span>
             </label>
-            <small class="hint">开启后，在非定点抢券时段内每隔约 5 分钟自动刷新一次页面，捡漏临时出现的可领取优惠券。建议在官方定点券未按时发放时才开启。</small>
+            <small class="hint">开启后，在非定点领券时段内每隔约 5 分钟自动刷新一次页面，捡漏临时出现的可领取优惠券。建议在官方定点券未按时发放时才开启。</small>
           </div>
 
           <div class="form-group" id="idle-time-range-group">
@@ -237,7 +237,7 @@
                 <span class="toggle-slider"></span>
               </span>
             </label>
-            <small class="hint">开启后每次抢券任务完成时发送结果邮件</small>
+            <small class="hint">开启后每次领券任务完成时发送结果邮件</small>
           </div>
 
           <div id="email-notify-group" style="display:none;">

@@ -1,4 +1,4 @@
-"""
+﻿"""
 QQ 邮箱通知模块
 
 在领券任务完成后发送结果通知邮件。
@@ -50,7 +50,7 @@ def send_result_email(
 
     # 标题
     if success > 0:
-        subject = f"✅ 抢券成功 {success} 张 — 京东外卖优惠券助手"
+        subject = f"✅ 领券成功 {success} 张 — 京东外卖优惠券助手"
     elif total == 0:
         subject = "ℹ️ 领券任务完成（无结果） — 京东外卖优惠券助手"
     else:
@@ -59,7 +59,7 @@ def send_result_email(
     # 正文（纯文本）
     time_str = task_time.strftime("%Y-%m-%d %H:%M:%S")
     lines = [
-        f"京东外卖优惠券抢券结果",
+        f"京东外卖优惠券领券结果",
         f"执行时间：{time_str}",
         f"",
         f"汇总：共 {total} 张  成功 {success}  失败 {failed}  已领取 {skipped}",
@@ -84,7 +84,7 @@ def send_result_email(
 
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = subject
-    msg["From"] = formataddr(("京东外卖抢券助手", sender))
+    msg["From"] = formataddr(("京东外卖领券助手", sender))
     msg["To"] = receiver
 
     try:

@@ -1,4 +1,4 @@
-"""
+﻿"""
 调度器控制器（子进程模式）
 
 通过 subprocess 启动独立的 worker.py 进程来运行 Playwright + 调度器，
@@ -32,7 +32,7 @@ def _get_worker_cmd(config_path: str, run_now: bool = False, once: bool = False)
 
 
 class SchedulerController:
-    """通过子进程管理抢券工作进程的生命周期。"""
+    """通过子进程管理领券工作进程的生命周期。"""
 
     def __init__(self) -> None:
         self._proc: subprocess.Popen | None = None

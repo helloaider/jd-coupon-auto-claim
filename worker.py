@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
-抢券工作进程入口
+领券工作进程入口
 
 由 Web 界面通过 subprocess 启动，负责：
 1. 验证登录状态（需要时弹出浏览器扫码）
-2. 在主线程循环等待触发时间，到时间直接执行抢券
+2. 在主线程循环等待触发时间，到时间直接执行领券
 3. 浏览器全程保持开着，不关不重开
 
 用法：
@@ -58,7 +58,7 @@ def _should_trigger(schedule: list[str], last_trigger_key: str) -> tuple[bool, s
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="抢券工作进程")
+    parser = argparse.ArgumentParser(description="领券工作进程")
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--once", action="store_true", help="立即执行一次后退出（临时测试用）")
     parser.add_argument("--run-now", action="store_true", help="立即执行一次后继续等待调度")
@@ -178,7 +178,7 @@ def main() -> None:
 
         readable = "、".join(_cron_to_time(e) for e in _cfg.schedule)
         logger.info("调度计划：每天 %s", readable)
-        logger.info("浏览器已就绪，等待调度触发时自动开始抢券")
+        logger.info("浏览器已就绪，等待调度触发时自动开始领券")
     except Exception:
         pass
 
@@ -287,7 +287,7 @@ def main() -> None:
 
     def _is_busy_window(schedule: list[str]) -> bool:
         """
-        检查当前时间是否处于定点抢券的忙时窗口（触发分钟:25 ~ 开抢分钟:30）。
+        检查当前时间是否处于定点领券的忙时窗口（触发分钟:25 ~ 开抢分钟:30）。
         在此窗口内闲时巡检主动跳过，不干扰定点任务。
         """
         now = datetime.now()
@@ -304,7 +304,7 @@ def main() -> None:
             if hour != -1 and now.hour != hour:
                 continue
             trigger_start = minute * 60 + 25
-            open_end = ((minute + 1) % 60) * 60 + 30  # 开抢分钟:30 后完全结束（与抢券结束时间 :25 留5s余量）
+            open_end = ((minute + 1) % 60) * 60 + 30  # 开抢分钟:30 后完全结束（与领券结束时间 :25 留5s余量）
             # 跨分钟边界（如触发59分，开抢0分）
             if open_end < trigger_start:
                 if cur_seconds >= trigger_start or cur_seconds <= open_end:
@@ -328,12 +328,12 @@ def main() -> None:
                     pass
                 break
 
-            # 定点抢券触发检测
+            # 定点领券触发检测
             should, last_trigger_key = _should_trigger(config.schedule, last_trigger_key)
             if should:
                 logger.info("调度触发，开始执行领券任务")
                 task_runner.run()
-                # 抢券结束后重置闲时巡检时间，避免刚抢完立刻又巡检
+                # 领券结束后重置闲时巡检时间，避免刚抢完立刻又巡检
                 if idle_check_enabled:
                     next_idle_ts = _next_idle_check_ts()
 
@@ -343,7 +343,7 @@ def main() -> None:
                     logger.debug("闲时巡检：当前不在配置的时间段内，跳过，等待下一节拍")
                     next_idle_ts = _next_idle_check_ts()
                 elif _is_busy_window(config.schedule):
-                    logger.debug("闲时巡检：当前处于定点抢券窗口，跳过本次")
+                    logger.debug("闲时巡检：当前处于定点领券窗口，跳过本次")
                     # 延迟 60s 后重新判断（等窗口结束）
                     next_idle_ts = time.time() + 60
                 else:
