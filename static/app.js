@@ -81,9 +81,6 @@ async function loadConfig() {
     // 推送服务（保留字段兼容旧配置，不在界面展示）
     // const notifier = data.notifier || {};
 
-    // jd_area
-    document.getElementById('jd-area').value = data.jd_area || '';
-
     // headless：True 表示后台静默，对应开关应为未勾选；
     // False（默认）表示弹出窗口，对应开关应勾选
     const headlessToggle = document.getElementById('headless-toggle');
@@ -144,7 +141,6 @@ async function saveConfig(event) {
     })).filter(t => t.url !== '');
 
     // 推送服务（保留字段兼容旧配置，不在界面展示，保存时不覆盖）
-    const jd_area = document.getElementById('jd-area').value.trim();
 
     // headless：开关勾选=弹出窗口（headless=false），未勾选=后台静默（headless=true）
     const headless = !document.getElementById('headless-toggle').checked;
@@ -175,7 +171,6 @@ async function saveConfig(event) {
       credential: { cookie: '' },
       schedule,
       coupon_targets,
-      jd_area,
       headless,
       grab_interval_ms,
       idle_check_enabled,

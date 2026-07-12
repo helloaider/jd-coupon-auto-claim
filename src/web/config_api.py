@@ -72,7 +72,6 @@ _EMPTY_CONFIG_TEMPLATE = {
     "credential": {"cookie": ""},
     "schedule": [],
     "coupon_targets": [],
-    "jd_area": "",
     "headless": False,
     "grab_interval_ms": 300,
     "idle_check_enabled": False,

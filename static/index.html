@@ -147,67 +147,49 @@
               <div id="target-name-col"></div>
             </div>
 
-            <!-- 分割行 -->
-            <div class="config-grid3-span3">
-              <hr class="section-divider" style="margin:12px 0 8px;" />
-              <div class="config-block-header" style="margin-bottom:10px;">领券行为设置</div>
-            </div>
-
-            <!-- 行为设置行：三列各一项 -->
-            <div class="form-group" style="margin-bottom:0;">
-              <label class="toggle-label">
-                <span>弹出浏览器窗口</span>
-                <span class="toggle-switch">
-                  <input type="checkbox" id="headless-toggle" />
-                  <span class="toggle-slider"></span>
-                </span>
-              </label>
-              <small class="hint">开启：领券时弹出浏览器窗口（可视化）；关闭：后台静默运行</small>
-            </div>
-
-            <div class="form-group" style="margin-bottom:0;">
-              <label for="grab-interval">领券刷新间隔（毫秒）</label>
-              <input
-                type="number"
-                id="grab-interval"
-                name="grab_interval_ms"
-                step="100"
-                placeholder="300"
-                style="width:100%"
-              />
-              <small class="hint">每次页面加载后额外等待的毫秒数，建议 200~2000</small>
-            </div>
-
-            <div class="form-group" style="margin-bottom:0;">
-              <label for="jd-area">收货地址编码（jd_area）</label>
-              <input
-                type="text"
-                id="jd-area"
-                name="jd_area"
-                placeholder="如：17_1381_50713_62969"
-                style="width:100%"
-              />
-              <small class="hint">省_市_区_街道，影响可见券范围</small>
-            </div>
-
           </div>
 
-          <!-- 板块三：闲时找券 -->
+          <!-- 领券行为设置：独立区块 -->
           <hr class="section-divider" />
-          <div class="config-block-header">闲时找券</div>
+          <div class="config-block-header" style="margin-bottom:10px;">领券行为设置</div>
+
           <div class="form-group">
-            <label class="toggle-label">
+            <label class="toggle-label" style="justify-content:space-between;">
+              <span>弹出浏览器窗口</span>
+              <span class="toggle-switch">
+                <input type="checkbox" id="headless-toggle" />
+                <span class="toggle-slider"></span>
+              </span>
+            </label>
+            <small class="hint">开启：领券时弹出领券浏览器窗口（适合需要观看过程的用户）；关闭：启动后领券浏览器在后台静默运行</small>
+          </div>
+
+          <div class="form-group">
+            <label for="grab-interval" style="display:inline; margin-right:8px;">领券刷新间隔（毫秒）</label>
+            <input
+              type="number"
+              id="grab-interval"
+              name="grab_interval_ms"
+              step="100"
+              placeholder="300"
+              style="width:100px; display:inline-block; vertical-align:middle;"
+            />
+            <small class="hint">每次页面加载后额外等待的毫秒数，建议 200~2000</small>
+          </div>
+
+          <div class="form-group">
+            <label class="toggle-label" style="justify-content:space-between;">
               <span>启用闲时找券</span>
               <span class="toggle-switch">
                 <input type="checkbox" id="idle-check-toggle" />
                 <span class="toggle-slider"></span>
               </span>
             </label>
-            <small class="hint">开启后，在非定点领券时段内每隔约 5 分钟自动刷新一次页面，捡漏临时出现的可领取优惠券。建议在官方定点券未按时发放时才开启。</small>
+            <small class="hint">非定点时段自动巡检页面，用于官方未按时发放券后可能临时补券场景</small>
           </div>
 
           <div class="form-group" id="idle-time-range-group">
-            <label>巡检时间段</label>
+            <label>闲时巡检时间段 <span style="font-weight:400; color:#888; font-size:12px;">（仅在此时间段内巡检，默认 10:01 到 18:56）</span></label>
             <div style="display:flex; align-items:center; gap:6px;">
               <div class="time-picker idle-hour-picker" id="idle-start-hour" data-value="10">
                 <div class="time-picker-val"><span class="tp-num">10</span><span class="tp-arrow">▾</span></div>
@@ -221,7 +203,6 @@
               </div>
               <span class="idle-min-fixed">:56</span>
             </div>
-            <small class="hint">仅在此时间段内巡检，默认 10:01 到 18:56</small>
           </div>
 
           <hr class="section-divider" />
@@ -230,20 +211,20 @@
           <div class="config-block-header">QQ邮箱通知</div>
           <!-- 邮件通知 -->
           <div class="form-group">
-            <label class="toggle-label">
+            <label class="toggle-label" style="justify-content:space-between;">
               <span>启用邮箱通知</span>
               <span class="toggle-switch">
                 <input type="checkbox" id="email-notify-toggle" />
                 <span class="toggle-slider"></span>
               </span>
             </label>
-            <small class="hint">开启后每次领券任务完成时发送结果邮件</small>
+            <small class="hint">开启后每次领券任务完成时发送结果邮件（微信订阅邮箱后每次可在微信收到领券结果通知）</small>
           </div>
 
           <div id="email-notify-group" style="display:none;">
             <div class="config-two-col" style="display:flex; gap:32px; margin-bottom:0; align-items:flex-start;">
               <div class="form-group" style="flex:1; margin-bottom:0;">
-                <label for="email-qq">QQ邮箱</label>
+                <label for="email-qq">发件人QQ邮箱</label>
                 <div style="display:flex; align-items:stretch;">
                   <input type="text" id="email-qq" placeholder="如：123456789" style="flex:1; border-radius:4px 0 0 4px; border-right:none;" />
                   <span style="display:flex; align-items:center; padding:0 10px; background:#f5f5f5; border:1px solid #d9d9d9; border-radius:0 4px 4px 0; font-size:13px; color:#888; white-space:nowrap;">@qq.com</span>
@@ -251,7 +232,7 @@
                 <small class="hint">将使用该邮箱向收件人发送提醒邮件</small>
               </div>
               <div class="form-group" style="flex:1; margin-bottom:0;">
-                <label for="email-auth-code">授权码</label>
+                <label for="email-auth-code">发件人邮箱授权码</label>
                 <input type="password" id="email-auth-code" placeholder="QQ邮箱授权码（非登录密码）" style="width:100%" />
                 <small class="hint">QQ邮箱设置 → 账号与安全 → 安全设置 → 开启 SMTP 服务 → 生成授权码</small>
               </div>
@@ -263,7 +244,7 @@
             </div>
           </div>
 
-          <div class="form-actions config-form-actions">
+          <div style="display:flex; justify-content:flex-end; margin-top:28px; padding-top:16px; border-top:1px solid #f0f0f0;">
             <button type="submit" class="btn btn-primary" id="save-btn">保存配置</button>
           </div>
         </form>

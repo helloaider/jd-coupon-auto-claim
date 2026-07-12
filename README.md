@@ -61,7 +61,6 @@ python main.py
 |------|------|
 | `schedule` | cron 触发时间列表，建议开放领券前 1 分钟，如 `29 10 * * *` |
 | `coupon_targets[].url` | 优惠券活动页面 URL |
-| `jd_area` | 京东收货地址编码，影响可见券范围 |
 | `headless` | `false`=弹出浏览器窗口，`true`=后台静默 |
 | `grab_interval_ms` | 页面刷新间隔（毫秒），建议 100~2000 |
 | `idle_check_enabled` | 是否开启闲时找券（默认 false） |

@@ -98,7 +98,6 @@ def main() -> None:
         config.coupon_targets,
         config.request_timeout,
         logger,
-        jd_area=config.jd_area,
         headless=config.headless,
         on_credential_updated=auth_manager.update_credential,
         grab_interval_ms=config.grab_interval_ms,

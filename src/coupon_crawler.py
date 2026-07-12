@@ -41,7 +41,6 @@ class CouponCrawler:
         targets: list[CouponTargetConfig],
         timeout: tuple[int, int],
         logger: logging.Logger,
-        jd_area: str = "",
         cookie: str = "",
         headless: bool = False,
         on_credential_updated=None,
@@ -50,7 +49,6 @@ class CouponCrawler:
         self._targets = targets
         self._timeout = timeout
         self._logger = logger
-        self._jd_area = jd_area
         self._session_cookie = cookie
         self._headless = headless
         self._playwright = None
@@ -159,6 +157,20 @@ class CouponCrawler:
             self._context.add_cookies(self._parse_cookies())
             self._logger.info("已注入登录凭证")
 
+        # 定位处理：有已保存坐标则注入（不弹窗），首次则正常弹窗让用户授权
+        import os as _os
+        _saved = _os.path.exists(self._LOCATION_FILE)
+        if _saved:
+            _lat, _lng = self._load_saved_location()
+            self._context.add_init_script(f"""
+                navigator.geolocation.getCurrentPosition = function(success) {{
+                    success({{coords: {{latitude: {_lat}, longitude: {_lng}, accuracy: 100}}}});
+                }};
+                navigator.geolocation.watchPosition = function(success) {{
+                    success({{coords: {{latitude: {_lat}, longitude: {_lng}, accuracy: 100}}}});
+                }};
+            """)
+
         # 应用页面运行时配置
         from playwright_stealth import Stealth
         stealth = Stealth(
@@ -172,7 +184,6 @@ class CouponCrawler:
             webgl_renderer_override="Mesa DRI Intel(R) UHD Graphics",
         )
         stealth.apply_stealth_sync(self._context)
-        self._logger.info("playwright-stealth 页面配置已应用")
 
         # 设置请求头，与 UA 版本保持一致
         self._context.set_extra_http_headers({
@@ -181,16 +192,6 @@ class CouponCrawler:
             "sec-ch-ua-mobile": "?1",
             "sec-ch-ua-platform": '"Android"',
         })
-
-        # 在京东 API 请求上补充请求头
-        def _add_jd_headers(route, req):
-            route.continue_(headers={
-                **dict(req.headers),
-                "Origin": "https://hour.jd.com",
-                "Referer": "https://hour.jd.com/",
-            })
-        for _jd_host in ("api.m.jd.com", "api*.jd.com", "hour.jd.com", "plogin.m.jd.com"):
-            self._context.route(f"https://{_jd_host}/*", _add_jd_headers)
 
         self._page = self._context.new_page()
 
@@ -254,6 +255,9 @@ class CouponCrawler:
                 pass
         self._logger.info("浏览器预热完成")
 
+        # 尝试从页面获取真实定位并保存（首次使用时）
+        self._try_extract_location_from_page(self._page)
+
     def _wait_for_login_if_needed(self, page, target_url: str) -> None:
         """
         检测当前页面是否为登录页。
@@ -266,6 +270,22 @@ class CouponCrawler:
             return any(d in page.url for d in _LOGIN_DOMAINS)
 
         if not _is_login_page():
+            return
+
+        # headless 模式下需要登录时，自动切换为有窗口模式
+        if self._headless:
+            self._logger.info("检测到需要登录，自动切换为有窗口模式")
+            self._headless = False
+            try:
+                self.close()
+            except Exception:
+                pass
+            self._browser = None
+            self._context = None
+            self._page = None
+            self._playwright = None
+            self._stopped = False
+            self._ensure_browser()
             return
 
         self._logger.warning("检测到登录页，请在浏览器中完成登录...")
@@ -299,8 +319,64 @@ class CouponCrawler:
         else:
             self._logger.warning("未能提取到登录凭证，请检查是否登录成功")
 
-        # 跳回目标页面
-        page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
+        # 跳回目标页面，reload 兜底防止登录后页面加载不完整
+        try:
+            page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
+        except Exception:
+            pass
+        try:
+            page.reload(wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # 定位坐标持久化
+    # ------------------------------------------------------------------
+
+    _LOCATION_FILE = "data/location.json"
+
+    def _load_saved_location(self) -> tuple[float, float]:
+        """加载保存的定位坐标。首次使用返回默认值（北京）。"""
+        import json, os
+        try:
+            if os.path.exists(self._LOCATION_FILE):
+                with open(self._LOCATION_FILE, "r") as f:
+                    data = json.load(f)
+                lat, lng = float(data["lat"]), float(data["lng"])
+                self._logger.info("使用已保存的定位坐标：%s, %s", lat, lng)
+                return lat, lng
+        except Exception:
+            pass
+        return 39.9042, 116.4074
+
+    def _save_location(self, lat: float, lng: float) -> None:
+        """保存定位坐标到文件。"""
+        import json, os
+        try:
+            os.makedirs(os.path.dirname(self._LOCATION_FILE), exist_ok=True)
+            with open(self._LOCATION_FILE, "w") as f:
+                json.dump({"lat": lat, "lng": lng}, f)
+            self._logger.info("定位坐标已保存：%s, %s", lat, lng)
+        except Exception as exc:
+            self._logger.warning("保存定位坐标失败：%s", exc)
+
+    def _try_extract_location_from_page(self, page) -> None:
+        """尝试从页面接口响应中提取真实定位坐标并保存。"""
+        try:
+            # 通过 CDP 获取页面实际使用的定位信息
+            result = page.evaluate("""
+                () => new Promise((resolve) => {
+                    navigator.geolocation.getCurrentPosition(
+                        (pos) => resolve({lat: pos.coords.latitude, lng: pos.coords.longitude}),
+                        () => resolve(null),
+                        {timeout: 3000}
+                    );
+                })
+            """)
+            if result and result.get("lat") and result.get("lng"):
+                self._save_location(result["lat"], result["lng"])
+        except Exception:
+            pass
 
     def _extract_cookie_from_browser(self) -> str:
         """从当前浏览器 context 提取所有 .jd.com 登录凭证，拼成 key=value; 字符串。"""
@@ -543,10 +619,21 @@ class CouponCrawler:
                         clicked = True
                         risk_control_count = 0
                         found_action = True
-                        # 点击后等待 800ms 再进入下一轮 reload，
-                        # 给服务端处理时间，减少紧跟其后的接口超时 warning
-                        page.wait_for_timeout(800)
-                        # 捕获点击后页面弹出的 toast 提示并写入日志
+                        # 点击后等待，给服务端处理时间
+                        page.wait_for_timeout(500)
+                        # 读取被点击按钮当前文字，判断是否已变更为成功/失败状态
+                        try:
+                            new_text = section.locator(".coupon-button-text").inner_text(timeout=300).strip()
+                            self._logger.info("点击后按钮文字变为：%s", new_text)
+                            if new_text == "已领取":
+                                self._logger.info("按钮已变为「已领取」，领券成功")
+                                return [ClaimResult(
+                                    coupon_info=coupon_info,
+                                    status=ClaimStatus.SUCCESS,
+                                    claimed_at=datetime.now(),
+                                )]
+                        except Exception:
+                            pass
                         self._log_toast(page)
                         break
 
@@ -781,8 +868,7 @@ class CouponCrawler:
                                 pass
                             if i < 2:
                                 page.wait_for_timeout(_r.randint(200, 500))
-                        # 等待一下看结果
-                        page.wait_for_timeout(800)
+                        page.wait_for_timeout(500)
                         # 捕获点击后页面弹出的 toast 提示并写入日志
                         self._log_toast(page, prefix="闲时巡检：")
                         try:

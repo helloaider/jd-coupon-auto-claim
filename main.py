@@ -16,6 +16,27 @@ import time
 import webbrowser
 
 
+_mutex_handle = None  # 全局持有，防止被 GC 回收导致互斥量失效
+
+
+def _check_single_instance() -> bool:
+    """检查是否已有实例在运行。返回 True 表示可以继续，False 表示已存在实例。"""
+    import ctypes
+    global _mutex_handle
+    _mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, "JDCouponAutoClaim_SingleInstance")
+    if ctypes.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        ctypes.windll.kernel32.CloseHandle(_mutex_handle)
+        _mutex_handle = None
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            "程序已在运行，请在系统托盘（右下角）中查看。",
+            "京东外卖定时优惠券领券助手",
+            0x40,  # MB_ICONINFORMATION
+        )
+        return False
+    return True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="京东定时外卖优惠券自动领取工具")
     parser.add_argument("--config", default="config.yaml", help="配置文件路径")
@@ -25,7 +46,7 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    # worker 模式：转发给 worker.py
+    # worker 模式：转发给 worker.py（不需要检查单实例）
     if args.worker:
         import worker as w
         sys.argv = [sys.argv[0], "--config", args.config]
@@ -35,6 +56,10 @@ def main() -> None:
             sys.argv.append("--once")
         w.main()
         return
+
+    # 主进程：单实例检查
+    if not _check_single_instance():
+        sys.exit(0)
 
     web_url = f"http://localhost:{args.port}"
 

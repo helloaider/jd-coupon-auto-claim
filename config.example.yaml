@@ -17,10 +17,6 @@ coupon_targets:
 '
     name: '京东外卖百补好运券'
 
-# 京东收货地址编码（省_市_区_街道），影响可见券范围
-# 可在京东 App 地址管理中查看，或抓包获取
-jd_area: ''
-
 # 浏览器窗口模式：false=弹出窗口（默认），true=后台静默
 headless: false
 

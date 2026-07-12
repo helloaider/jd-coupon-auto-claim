@@ -75,10 +75,6 @@ class AppConfig(BaseModel):
         default=(5, 15),
         description="HTTP 超时 (connect_seconds, read_seconds)",
     )
-    jd_area: str = Field(
-        default="",
-        description="京东收货地址编码，如 '17_1381_50713_62969'，影响可见券范围",
-    )
     headless: bool = Field(
         default=False,
         description="是否以无头模式运行浏览器（False=弹出窗口，True=后台静默）",
